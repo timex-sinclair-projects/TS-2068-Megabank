@@ -280,8 +280,8 @@ question 4), new registers, settings, all through a firmware update.
 | D0–D7, on the SRAM side of the data buffer | 8 |
 | /MREQ, /IORQ, /RD, /WR, /RFSH, /M1, /RESET, from the control buffer | 7 |
 | /BE request | 1 |
-| Page bits: 8 to SRAM A13–A20, 1 to the chip-select decoder | 9 |
-| SRAM select, write inhibit, data buffer enable | 3 |
+| Page bits: 8 to SRAM A13–A20 (the 9th picks the chip, through the /CE1s) | 8 |
+| /CE1 of each SRAM, write inhibit, data buffer enable | 4 |
 | Write-protect switch | 1 |
 | Battery: ADC and its switch | 2 |
 | **Total** | **42 of 48** |
@@ -294,23 +294,30 @@ Candidates, with JLCPCB stock on 2026-10-16. Availability is open question 6.
 
 | Function | Part (candidate) | LCSC | Notes |
 |---|---|---|---|
-| Memory | 2 × CY62167DV30LL-55ZXIT (16 Mbit, 2.2–3.6 V, TSOP-48), used as 2M×8 | C2956479 | 4 MB in two chips. 168 in stock, and 42 of the CY62167EV30LL-45ZXIT (C511152): enough for a 10-board run, but thin. ×8 through the BYTE pin: confirm in the datasheet (open question 6). |
-| Memory (fallback) | 4 × IS62WV51216BLL-55TLI (512K×16, 3.3 V, TSOP-II-44) | C11315 | 3,623 in stock. Used as ×8: D0–7 tied to D8–15, /LB from A0 and /UB from A0 through a 74LVC1G04; A1–A12 and the page bits form the word address. A different footprint: choose before layout. |
+| Memory | 2 × CY62167EV30LL-45ZXIT (16 Mbit, 2.2–3.6 V, 45 ns, TSOP-I 48), used as 2M×8 | C511152 | 4 MB in two chips. **×8 confirmed (decided):** BYTE tied to ground makes it 2M×8, pin 45 (I/O15/A20) becomes A20, and BHE, BLE and I/O8–I/O14 are unused. Preferred over the DV30 for its standby current (below). 42 in stock: thin. |
+| Memory (alternate) | 2 × CY62167DV30LL-55ZXIT (same package drawing 51-85183 and pinout) | C2956479 | 168 in stock. The same footprint, with one difference: the DV30 marks BHE and BLE "do not use, leave floating", while the EV30 needs them tied to a logic level for its standby figures. Route each to ground through an unfitted 0 Ω pad: fitted for the EV30, left open for the DV30. Its standby is worse: 22 µA maximum per chip, with every input within 0.2 V of a rail. |
+| Memory (fallback) | 4 × IS62WV51216BLL-55TLI (512K×16, 3.3 V, TSOP-II-44) | C11315 | 3,623 in stock. Used as ×8: D0–7 tied to D8–15, /LB from A0 and /UB from A0 through a 74LVC1G04; A1–A12 and the page bits form the word address. A different footprint: choose before layout. It has no CE2 (check), so it would bring back a decoder and gating on the SRAM rail for power-fail protection, and need four chip selects (two more pins). |
 | Controller | RP2350B (QFN-80), with v3's core circuit: QSPI flash, crystal, core regulator | C42415655 | 4,873 in stock. Copy v3's RP2350B schematic sheet. L1, the core regulator's inductor (Abracon AOTA-B201610S3R3-101-T, C42411119), had 4 in stock: fit it by hand, as on v3, unless restocked. |
 | Buffers | 4 × 74LVC245APW: A0–A7, A8–A15 and the control lines one way; D0–D7 both ways | C6082 | The same part as v3. Their power-off protection (Ioff) means that with the 2068 off they neither drive nor load the SRAM side. |
 | /BE driver | 74LVC1G06 (inverting, open-drain) | C7828 | Wire-ORs with v3's 74LVC06. The RP2350's reset state (input, pull-down) leaves /BE released. |
-| SRAM gating | 74LVC2G32 (dual OR), on the SRAM rail | | One gate: the decoder's enable = the controller's select OR "power not good". The other: SRAM /WE = buffered /WR OR the controller's write inhibit, which it sets per chunk from `WPROT` and the switch. |
-| Chip enables | 1-of-2 decoder with enable (74LVC1G19 class; 74LVC139 for four chips), on the SRAM rail | | Pull-ups to the SRAM rail on its outputs, so /CE stays high when 3.3 V is off. The controller drives only its inputs. |
+| Chip enables | The CY62167's two: /CE1 (active low) and CE2 (active high) | | CE2 low deselects the chip whatever /CE1 does, including in data retention. **Both chips' CE2 come from the supervisor**, with a pull-down to ground, so they are high only while 3.3 V is good. **Each chip's /CE1 comes straight from the controller**, qualified by /MREQ, with a pull-down so it sits at a logic level on battery. No decoder, and no logic on the SRAM rail. |
+| /WE gate | 74LVC1G32 (OR), on 3.3 V | | SRAM /WE = buffered /WR OR the controller's write inhibit, which it sets per chunk from `WPROT` and the switch. The write-inhibit line has a **pull-up**, so writes are blocked until the controller's firmware runs: Z80 writes during its boot cannot reach the RAM disk. |
 | Power mux | LM66200 (ideal-diode ORing, 1.6–5.5 V, 1.32 µA) | C3235556 | Feeds the SRAM rail from 3.3 V or the battery. **Not the TPS2115A:** it draws about 55 µA from the battery, which would empty a coin cell in months. **Not plain diodes:** with 3.3 V on, the SRAM rail must stay close to 3.3 V, or the buffers and the controller push current into the SRAM's input clamps. |
-| Supervisor | TPS3839G33 on 3.3 V | C485802 | Through an N-MOSFET, pulls the "power not good" line low only while 3.3 V is good. A pull-up to the SRAM rail holds it high otherwise, so no writes happen while power rises or falls. |
-| Battery | CR2032 in an SMD holder (a CR2450 clip for longer life) | C22363833, C7498149 | Two CY62167s in standby plus the mux: roughly 10 µA typical, about two years on a CR2032 and six on a CR2450. Worst case at temperature is higher: measure the real board. |
+| Supervisor | TPS3839G33 on 3.3 V (threshold about 3.08 V) | C485802 | Drives both chips' CE2 directly: high while 3.3 V is good, low below the threshold, and the pull-down holds them low with 3.3 V gone. So no writes happen while power rises or falls, well above the SRAM's 2.2 V minimum. |
+| Battery | CR2032 in an SMD holder (a CR2450 clip for longer life) | C22363833, C7498149 | Two CY62167EV30s in standby (1.5 µA typical, 3.0 µA maximum at 25 °C and 3.5 µA at 40 °C, each) plus the mux (1.3 µA): about 8.5 µA worst case at room temperature, so about three years on a CR2032 and eight on a CR2450. At 85 °C the chips' maximum is 12 µA each. Data is kept down to 1.5 V. Measure the real board. |
 | Battery monitor | The RP2350B's ADC, through a MOSFET it switches on only to measure | | So the battery never feeds the unpowered RP2350's pins. `STATUS` bit 1 below about 2.5 V. |
 | Switch | Write-protect, SMD slide | | |
 
-**Standby with the controller off.** The SRAMs' address, data and /WE inputs
-then sit at whatever the unpowered RP2350B and buffers leave them. With /CE
-high that cannot write, but check that each SRAM's standby current is specified
-with its inputs anywhere, not only at the rails (open question 12).
+**Standby with the controller off.** CE2 is held low by its pull-down, so the
+chips are deselected. The EV30 datasheet allows the other inputs (address, data,
+/OE, /WE) to float in standby; only CE1, CE2, BHE, BLE and BYTE must sit at
+logic levels, which the pull-downs and the ties to ground give. (The DV30
+specifies standby with every input at a rail.)
+
+**From the EV30 datasheet, for layout:** in TSOP-I, input low must not exceed
+0.7 V while signals switch (0.8 V static), so keep ground bounce down; and
+the chip wants a 100 µs supply ramp and 200 µs before full operation, which
+the RP2350B's boot more than covers.
 
 ### Timing
 
@@ -717,10 +724,11 @@ reference for what it changes.
    ([ROM](#the-timex-bank-api-on-the-board-phase-8)): items 1–5 (the API
    works with the board) or all of it. David leans towards the minimum.
 6. **Parts, for JLCPCB assembly** ([Hardware](#parts)):
-   - **The SRAM.** Confirm in the datasheet that the CY62167's TSOP-48
-     package works as 2M×8 through its BYTE pin, and which of the DV30 and
-     EV30 dies is current (the older may be marked not for new designs). JLCPCB
-     stock is thin (168 and 42 on 2026-10-16). If it runs out, switch to the
+   - **The SRAM.** The ×8 mode is confirmed in both datasheets. Still open:
+     whether the DV30 is current (its only datasheet found is from 2006; the
+     EV30's is Infineon's, 2020), and stock, which is thin at JLCPCB (42 EV30s
+     and 168 DV30s on 2026-10-16). The BHE/BLE difference between them is
+     handled by the 0 Ω pads. If it runs out, switch to the
      IS62WV51216 (3,623 in stock), a different footprint, before layout. The
      earlier candidates were not at JLCPCB on that date: AS6C4008 (5 left),
      AS6C8008, CY62177G30, IS62WV20488, and Everspin MRAM.
@@ -730,7 +738,7 @@ reference for what it changes.
      (a pull-down that latches), or don't rely on internal pull-downs.
    - **The slot connection:** gold fingers (no part; JLCPCB charges for the
      gold and the bevel) or a connector, which may be through-hole.
-   - **The 74LVC2G32 and the 1-of-2 decoder:** pick parts, with LCSC numbers.
+   - **The 74LVC1G32 and the pull resistors:** pick parts, with LCSC numbers.
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
@@ -744,10 +752,10 @@ reference for what it changes.
     (a surface-mount USB-C connector, or SWD pads), and how `BASE` and `SIZE`
     are set: over USB, or from the 2068 through a guarded register
     (`SAVE "tpi:ram base 65"`, say).
-12. **Standby with the controller off.** Check each SRAM datasheet's standby
-    current with its inputs left by unpowered parts rather than at the rails,
-    and that no path lets the battery feed the RP2350B or the buffers. Measure
-    on the prototype (hardware test 3).
+12. **Standby with the controller off.** Settled on paper for the EV30
+    ([Parts](#parts)). Still to check: that no path lets the battery feed the
+    RP2350B or the buffers, and the real standby current on the prototype
+    (hardware test 3), with the DV30 too if it is fitted.
 
 ## Sources
 
@@ -776,3 +784,6 @@ reference for what it changes.
   interface, `hardware/scripts/parts.py`, `jlc_price.py` and `gen_fab.py`.
 - JLCPCB's parts catalog, queried with `jlc_price.py` on 2026-10-16 for the
   stock and prices under [Parts](#parts).
+- Infineon, *CY62167EV30 Industrial MoBL 16-Mbit (1M × 16/2M × 8) Static
+  RAM*, document 002-24706 Rev. \*B, April 2020; Cypress, *CY62167DV30 MoBL
+  16-Mbit (1M x 16) Static RAM*, document 38-05328 Rev. \*G, July 2006.
