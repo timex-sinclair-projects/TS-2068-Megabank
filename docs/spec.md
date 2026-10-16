@@ -32,7 +32,8 @@ those still to be checked on hardware are listed under [Open questions](#open-qu
 - [The board](#the-board): what it does on the bus
 - [Registers](#registers): ports FCh/FDh
 - [Programming it](#programming-it): for people writing 2068 software
-- [Hardware](#hardware): parts, battery backup, the expansion bus
+- [Hardware](#hardware): the RP2350B controller, parts for JLCPCB
+  assembly, battery backup, timing
 - [Sharing the bus](#sharing-the-bus): the v3 card, PicoVideo, BUSISO
 - [ROM](#rom): what ROM 2.4 adds
 - [The RAM disk](#the-ram-disk): `r:`, the mover, the on-board format
@@ -141,13 +142,14 @@ register per bank, only one per chunk:
 4. Otherwise the board does nothing: no /BE, data bus untouched.
 
 **The SRAM address** is `page × 8K + A12..A0`, with
-`page = (owner − BASE) × 8 + SUB[chunk]` (0–511): 22 bits, the top 3 picking
-one of eight 512K chips.
+`page = (owner − BASE) × 8 + SUB[chunk]` (0–511): 22 bits. With two 2 MB
+chips the top bit picks the chip; with the four-chip fallback, the top two
+([Hardware](#hardware)).
 
 **Reset** (/RESET low): every `OWNn` = 0, `SUBn` = *n*, `WPROT` = 0. The
 2068 boots as if the board weren't there. The SRAM keeps its contents.
 
-**Bank numbers.** A two-position switch sets `BASE`, the first bank: 1, 65,
+**Bank numbers.** A setting in the controller's flash sets `BASE`, the first bank: 1, 65,
 129 or 193. Two boards can share a 2068 (8 MB), and bank numbers stay inside
 Timex's 1–253. With `BASE` = 193 only banks 193–253 (61) are usable.
 
@@ -168,7 +170,7 @@ anyway **(decided)**.
 | 12h | `ID` | R | – | A5h, the signature. |
 | 13h | `IDCOMP` | R | – | 5Ah, its complement (an absent board reads FFh twice). |
 | 14h | `BASE` | R | – | The first bank number: 1, 65, 129 or 193. |
-| 15h | `SIZE` | R | – | Banks fitted: 8, 16, 32 or 64 (jumpers, for boards built with fewer chips). |
+| 15h | `SIZE` | R | – | Banks fitted: 8, 16, 32 or 64 (a setting in the controller's flash, for boards built with fewer chips). |
 | 16h | `VERSION` | R | – | Board/logic version, starting at 1. |
 
 - **IN FDh** reads back the selected register number, so an interrupt handler
@@ -226,36 +228,109 @@ chunk *n*), the first two `OUT`s are enough.
 
 ## Hardware
 
-The board's job is simple but its battery backup has to be right. Parts are
-candidates; availability is open question 6.
+**Built by JLCPCB, surface-mount throughout (decided).** The board is made the
+way the v3 card is, and reuses its tools from the
+[tspico-hardware](https://github.com/factus10/tspico-hardware) repository:
+`scripts/parts.py` (MPN and LCSC number for every part), `scripts/jlc_price.py`
+(prices and stock against JLCPCB's catalog) and `scripts/gen_fab.py` (the
+upload files). The aim is no hand soldering. Today one part, the RP2350's L1,
+still needs it, as on v3.
 
-| Function | Part (candidate) | Notes |
-|---|---|---|
-| Memory | 8 × AS6C4008 (512K×8, 5 V, 55 ns, SOP-32 or DIP-32) | 4 MB. Fewer chips for a cheaper build; `SIZE` jumpers say how many. |
-| Logic | ATF1508AS (5 V CPLD, 128 macrocells, PLCC-84 or TQFP-100) | Port decode, the 18 registers (about 100 flip-flops), the owner lookup, /BE, SRAM address and enables. A 1504 (64 macrocells) is too small. |
-| Data buffer | 74HCT245 | Between the bus and the SRAM data lines: isolates the SRAM when the board isn't selected or the 2068 is off. |
-| /BE driver | open-drain (74HCT05, or the CPLD's open-collector option) | Wire-ORs with the v3 card's 74LVC06. |
-| Power mux | ideal-diode switch (TPS2115A class) | Feeds the SRAM rail from +5 V or the battery. **Not plain diodes:** with VCC on, the SRAM rail must sit within a few tenths of a volt of 5 V, or 5 V address and data lines push current into it through its input clamps. LarKen's 1N914s dropped 0.7 V. |
-| Chip enables | 74HC138 on the SRAM rail, enable from the supervisor | The eight /CE lines come from a decoder powered by the battery, with pull-ups to that rail, so they stay high when VCC is off. The CPLD (on VCC) only drives the decoder's select inputs. |
-| Supervisor | voltage supervisor on +5 V (TPS3839 class, ~4.5 V threshold) | Holds the decoder disabled while +5 V is below threshold: no writes while power rises or falls. Replaces LarKen's +15 V divider. |
-| Battery | 2 × AA holder, or CR2477 | AS6C4008 standby is a few µA typical per chip at room temperature (check the datasheet's worst case): eight chips on 2 × AA should last years, on a CR2032 perhaps a year. Measure the real board. |
-| Battery monitor | comparator on the battery, powered from VCC | `STATUS` bit 1 below about 2.5 V. |
-| Switches | write-protect slide switch; `BASE` (2 bits); `SIZE` (2 bits) | |
+**3.3 V inside, 5 V bus (decided).** A controller (RP2350B) and 3.3 V SRAM sit
+behind 74LVC buffers. LVC inputs accept the 2068's 5 V, and a 3.3 V high is a
+valid TTL high for the Z80, as the v3 card already shows. These are v3's parts
+and toolchain. There is no CPLD and no WinCUPL.
 
-**Timing.** The 2068's memory cycles leave about 300 ns from address to data;
-55 ns SRAM and a CPLD (7–10 ns) through a buffer fit with room to spare. The
-critical path is **/BE**: it has to switch off the 2068's own memory before
-that memory drives the bus. The v3 card already asserts /BE early, from
-A13–A15 on a memory read. The board decodes from A13–A15 plus the owner table,
-gated by /MREQ, which is comparable, but it must be measured on a 2068 through
-the expansion bus (open question 2).
+### The controller
 
-**Refresh.** On a refresh cycle (/RFSH low) the board stays off the bus and
-leaves /BE alone, so it never interferes with the 2068's DRAM refresh.
+**An RP2350B replaces the CPLD (decided), as the memory map, not the data
+path.** It decodes FCh/FDh, holds the registers, and for each memory cycle
+gives /BE, the page's address bits and the SRAM enables. The bytes go straight
+between the SRAM and the bus through a 74LVC245, so the RP2350B never handles
+them in a memory cycle. Being software, it can grow: a write fence (open
+question 4), new registers, settings, all through a firmware update.
 
-**Form factor.** A standard card for the expansion bus card (TS2068_Extender):
-three slots and a pass-through, of which the TS-Pico and PicoVideo normally
-take two. The board needs no pass-through of its own.
+- **/BE** uses the mechanism the v3 card proved on a 2068 (`serve` in
+  `src/tsbus/tsbus.pio`). A PIO program reads A15–A13 and jumps (`out pc, 3`)
+  through an 8-entry chunk table that core 1 patches whenever a register
+  changes, with /BE side-set on the same instruction, at 250 MHz. Here the
+  table is the owner table: a chunk owned by one of the board's banks jumps to
+  the path that asserts /BE.
+- **The page bits are not time-critical.** On a 3.53 MHz read about 400 ns pass
+  between a valid address and the data being needed; the SRAM (45–55 ns) and a
+  buffer (about 5 ns) use under 70 of them. Whether the page comes from a second
+  PIO table, a DMA-chained lookup or core 1 is settled on the bench (open
+  question 2).
+- **Register writes** are I/O cycles of over a microsecond. A PIO program
+  catches `OUT` to FDh/FCh, as v3's `io_snoop` does, and core 1 updates the
+  tables before the next memory read. `IN` from FCh/FDh is answered the way v3's
+  `io_drive` answers `IN 0Eh`.
+- **Settings** that were switches and jumpers (`BASE`, `SIZE`) live in the
+  controller's flash (open question 11).
+- **Safe at power-up.** Every controller output that enables something is
+  inactive in the RP2350's reset state (external pull-ups, or an inverting
+  driver like /BE's), so the board stays off the bus until its firmware runs.
+  The ROM's boot-time writes then set it up ([Sharing the bus](#sharing-the-bus)).
+
+**Pins.** The RP2350B has 48 GPIOs; the 30-GPIO RP2350A is too small.
+
+| Signals | Pins |
+|---|---|
+| A0–A7 (port decode) and A13–A15 (chunk), from the address buffers | 11 |
+| D0–D7, on the SRAM side of the data buffer | 8 |
+| /MREQ, /IORQ, /RD, /WR, /RFSH, /M1, /RESET, from the control buffer | 7 |
+| /BE request | 1 |
+| Page bits: 8 to SRAM A13–A20, 1 to the chip-select decoder | 9 |
+| SRAM select, write inhibit, data buffer enable | 3 |
+| Write-protect switch | 1 |
+| Battery: ADC and its switch | 2 |
+| **Total** | **42 of 48** |
+
+The data buffer's direction comes from the buffered /RD, not from a pin.
+
+### Parts
+
+Candidates, with JLCPCB stock on 2026-10-16. Availability is open question 6.
+
+| Function | Part (candidate) | LCSC | Notes |
+|---|---|---|---|
+| Memory | 2 × CY62167DV30LL-55ZXIT (16 Mbit, 2.2–3.6 V, TSOP-48), used as 2M×8 | C2956479 | 4 MB in two chips. 168 in stock, and 42 of the CY62167EV30LL-45ZXIT (C511152): enough for a 10-board run, but thin. ×8 through the BYTE pin: confirm in the datasheet (open question 6). |
+| Memory (fallback) | 4 × IS62WV51216BLL-55TLI (512K×16, 3.3 V, TSOP-II-44) | C11315 | 3,623 in stock. Used as ×8: D0–7 tied to D8–15, /LB from A0 and /UB from A0 through a 74LVC1G04; A1–A12 and the page bits form the word address. A different footprint: choose before layout. |
+| Controller | RP2350B (QFN-80), with v3's core circuit: QSPI flash, crystal, core regulator | C42415655 | 4,873 in stock. Copy v3's RP2350B schematic sheet. L1, the core regulator's inductor (Abracon AOTA-B201610S3R3-101-T, C42411119), had 4 in stock: fit it by hand, as on v3, unless restocked. |
+| Buffers | 4 × 74LVC245APW: A0–A7, A8–A15 and the control lines one way; D0–D7 both ways | C6082 | The same part as v3. Their power-off protection (Ioff) means that with the 2068 off they neither drive nor load the SRAM side. |
+| /BE driver | 74LVC1G06 (inverting, open-drain) | C7828 | Wire-ORs with v3's 74LVC06. The RP2350's reset state (input, pull-down) leaves /BE released. |
+| SRAM gating | 74LVC2G32 (dual OR), on the SRAM rail | | One gate: the decoder's enable = the controller's select OR "power not good". The other: SRAM /WE = buffered /WR OR the controller's write inhibit, which it sets per chunk from `WPROT` and the switch. |
+| Chip enables | 1-of-2 decoder with enable (74LVC1G19 class; 74LVC139 for four chips), on the SRAM rail | | Pull-ups to the SRAM rail on its outputs, so /CE stays high when 3.3 V is off. The controller drives only its inputs. |
+| Power mux | LM66200 (ideal-diode ORing, 1.6–5.5 V, 1.32 µA) | C3235556 | Feeds the SRAM rail from 3.3 V or the battery. **Not the TPS2115A:** it draws about 55 µA from the battery, which would empty a coin cell in months. **Not plain diodes:** with 3.3 V on, the SRAM rail must stay close to 3.3 V, or the buffers and the controller push current into the SRAM's input clamps. |
+| Supervisor | TPS3839G33 on 3.3 V | C485802 | Through an N-MOSFET, pulls the "power not good" line low only while 3.3 V is good. A pull-up to the SRAM rail holds it high otherwise, so no writes happen while power rises or falls. |
+| Battery | CR2032 in an SMD holder (a CR2450 clip for longer life) | C22363833, C7498149 | Two CY62167s in standby plus the mux: roughly 10 µA typical, about two years on a CR2032 and six on a CR2450. Worst case at temperature is higher: measure the real board. |
+| Battery monitor | The RP2350B's ADC, through a MOSFET it switches on only to measure | | So the battery never feeds the unpowered RP2350's pins. `STATUS` bit 1 below about 2.5 V. |
+| Switch | Write-protect, SMD slide | | |
+
+**Standby with the controller off.** The SRAMs' address, data and /WE inputs
+then sit at whatever the unpowered RP2350B and buffers leave them. With /CE
+high that cannot write, but check that each SRAM's standby current is specified
+with its inputs anywhere, not only at the rails (open question 12).
+
+### Timing
+
+The 2068's memory cycles leave about 300–400 ns from address to data; 45–55 ns
+SRAM through a 5 ns buffer fits with room to spare. The critical path is
+**/BE**: it has to switch off the 2068's own memory before that memory drives
+the bus. The v3 card does exactly this from the same RP2350 PIO path, and it
+works on a 2068. The board's version must still be measured on a 2068 through
+the expansion bus, with the v3 card in place (open question 2).
+
+**Refresh.** On a refresh cycle (/RFSH low) the controller stays off the bus
+and leaves /BE alone, so it never interferes with the 2068's DRAM refresh.
+
+### Form factor
+
+A standard card for the expansion bus card (TS2068_Extender): three slots and a
+pass-through, of which the TS-Pico and PicoVideo normally take two. The board
+needs no pass-through of its own. How it connects to the slot (gold fingers, or
+a connector) and how its firmware is loaded (USB-C, or SWD pads) are open
+questions 6 and 11.
 
 ## Sharing the bus
 
@@ -580,6 +655,10 @@ line to fix.
    detection, in the style of the existing `rom_*_hosttest.py`.
 4. **Firmware host tests** for the file system: format, save/load/erase,
    fragmentation and compaction, a corrupt superblock, the generation counter.
+5. **The controller's firmware** on an RP2350B development board, with the
+   v3 card's PIO programs as the starting point: register writes and reads,
+   the owner table, /BE and the page bits against a logic analyser, before
+   any Megabank PCB exists.
 
 **On hardware:**
 
@@ -610,7 +689,8 @@ reference for what it changes.
 4. **ROM: detection, boot reset and the mover**, plus the `r:` hook.
 5. **Firmware: the RAM disk** and `tpi:ram`.
 6. **PicoVideo** update (its own repo).
-7. **Board:** schematic, CPLD logic, PCB, prototype, hardware tests. Can run
+7. **Board:** schematic, the controller's firmware, PCB (assembled by
+   JLCPCB), prototype, hardware tests. Can run
    in parallel with 2–6 once the register map is agreed.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. David leans towards only what
@@ -621,7 +701,10 @@ reference for what it changes.
 1. **Do ports FCh/FDh collide with the 2068 itself?** Testing step 1, on a
    bare 2068. If the SCLD answers them, the registers move to another pair.
 2. **/BE timing** through the expansion bus, in every slot, with the v3 card
-   and PicoVideo fitted. Measured on the prototype.
+   and PicoVideo fitted. Measured on the prototype. The v3 card's PIO path
+   already wins this race on a 2068; the board's must too. Also measured: how
+   the page bits are produced (a second PIO table, a DMA-chained lookup or
+   core 1), and that they settle well inside the read.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.
@@ -633,9 +716,21 @@ reference for what it changes.
 5. **Scope of the Timex bank API work**
    ([ROM](#the-timex-bank-api-on-the-board-phase-8)): items 1–5 (the API
    works with the board) or all of it. David leans towards the minimum.
-6. **Parts:** availability and price of the AS6C4008, the ATF1508AS (and a
-   toolchain for it: WinCUPL is Windows-only and dated), the power mux, the
-   supervisor and the battery holder.
+6. **Parts, for JLCPCB assembly** ([Hardware](#parts)):
+   - **The SRAM.** Confirm in the datasheet that the CY62167's TSOP-48
+     package works as 2M×8 through its BYTE pin, and which of the DV30 and
+     EV30 dies is current (the older may be marked not for new designs). JLCPCB
+     stock is thin (168 and 42 on 2026-10-16). If it runs out, switch to the
+     IS62WV51216 (3,623 in stock), a different footprint, before layout. The
+     earlier candidates were not at JLCPCB on that date: AS6C4008 (5 left),
+     AS6C8008, CY62177G30, IS62WV20488, and Everspin MRAM.
+   - **L1**, the RP2350's core inductor, had 4 in stock: hand-fit, as on v3,
+     unless restocked.
+   - **The RP2350B's stepping.** Use a stepping without the E9 pad erratum
+     (a pull-down that latches), or don't rely on internal pull-downs.
+   - **The slot connection:** gold fingers (no part; JLCPCB charges for the
+     gold and the bevel) or a connector, which may be through-hole.
+   - **The 74LVC2G32 and the 1-of-2 decoder:** pick parts, with LCSC numbers.
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
@@ -645,6 +740,14 @@ reference for what it changes.
    against it, so RAM banks may not need entries at all; decide in phase 8.
 10. **The bank stack** holds 16 frames of 4 bytes with no overflow check.
     Deep `CALL_BANK` nesting could overrun it. Phase 8.
+11. **The controller's firmware and settings.** How its firmware is loaded
+    (a surface-mount USB-C connector, or SWD pads), and how `BASE` and `SIZE`
+    are set: over USB, or from the 2068 through a guarded register
+    (`SAVE "tpi:ram base 65"`, say).
+12. **Standby with the controller off.** Check each SRAM datasheet's standby
+    current with its inputs left by unpowered parts rather than at the rails,
+    and that no path lets the battery feed the RP2350B or the buffers. Measure
+    on the prototype (hardware test 3).
 
 ## Sources
 
@@ -666,5 +769,10 @@ reference for what it changes.
 - PicoVideo v4.2, github.com/timex-sinclair-projects/PicoVideo
   (`PICOVID.PLD`, `coreB/busMain.c`).
 - TS2068_Extender v2.1, github.com/timex-sinclair-projects/TS2068_Extender.
-- This repository: `src/rom/TSPICO-23.ROM`, `ROMs/GENUINE-2068-exrom.bin`,
-  `src/tsbus/tsbus.c` and `tsbus.pio`, `docs/reference/rom/`.
+- tspico-firmware-build: `src/rom/TSPICO-23.ROM`, `ROMs/GENUINE-2068-exrom.bin`,
+  `src/tsbus/tsbus.c` and `tsbus.pio` (the v3 card's `serve`, `io_snoop` and
+  `io_drive` PIO programs), `docs/reference/rom/`.
+- tspico-hardware (the v3 card): the RP2350B core circuit, the 74LVC bus
+  interface, `hardware/scripts/parts.py`, `jlc_price.py` and `gen_fab.py`.
+- JLCPCB's parts catalog, queried with `jlc_price.py` on 2026-10-16 for the
+  stock and prices under [Parts](#parts).

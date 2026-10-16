@@ -19,7 +19,7 @@ It gives the 2068:
 
 | Part | Repository |
 |---|---|
-| The board: schematic, PCB, CPLD logic | here |
+| The board: schematic, PCB, the controller's firmware | here |
 | The TS-Pico ROM (detection, the RAM disk's copy routine, `r:`, the Timex bank API) and the v3 firmware (bus sharing, the RAM disk's file system) | [tspico-firmware-build](https://github.com/timex-sinclair-projects/tspico-firmware-build) |
 | PicoVideo's support (ignoring screen writes to mapped banks) | [PicoVideo](https://github.com/timex-sinclair-projects/PicoVideo) |
 | The emulator model | [zesarux-tspico](https://github.com/timex-sinclair-projects/zesarux-tspico) |
@@ -40,6 +40,6 @@ pressed. If not, the registers move to another port pair.
 
 | What | Licence | File |
 |---|---|---|
-| Hardware design files: schematic, PCB, and the CPLD logic (its sources and fuse maps) | CERN Open Hardware Licence v2, Permissive (CERN-OHL-P-2.0) | [LICENSE-hardware.txt](LICENSE-hardware.txt) |
-| Software: tools and test programs | MIT | [LICENSE](LICENSE) |
+| Hardware design files: schematic and PCB | CERN Open Hardware Licence v2, Permissive (CERN-OHL-P-2.0) | [LICENSE-hardware.txt](LICENSE-hardware.txt) |
+| Software: the board's controller firmware (RP2350B), tools and test programs | MIT | [LICENSE](LICENSE) |
 | Documentation (`docs/`, this README) | Creative Commons Attribution 4.0 (CC BY 4.0) | [LICENSE-docs.txt](LICENSE-docs.txt) |
