@@ -1,0 +1,670 @@
+# TS-2068 Megabank (specification, draft)
+
+A battery-backed 4 MB RAM board for the 2068, built the way Timex meant
+memory to grow: as **expansion banks** that take over any 8K chunk of the
+address space, above HOME, EXROM and DOCK. It is a plain card for a free slot
+on the expansion bus, for owners of the TS-Pico v3 card. It gives the 2068
+two things it never had:
+
+- **Paged memory.** A program maps any 8K page of the 4 MB into any chunk
+  with two `OUT`s and uses it at full memory speed: fonts, icons, window
+  buffers, code overlays, a second screen's worth of work space.
+- **A RAM disk.** `SAVE "r:name"`, `LOAD "r:name"`, `CAT "r:"` and the rest,
+  as fast as the Z80 can copy, kept through power-off by a battery.
+
+It began with David's question (2026-10-16) whether the TS-Pico could emulate
+the LarKen 256K RAMdisk, and with a 2068 GUI author asking for a RAM disk.
+Decisions taken with David on 2026-10-16 are marked **(decided)**.
+
+**Paths** like `src/tsbus/tsbus.c` or `src/rom/TSPICO-23.ROM` are in the
+TS-Pico firmware repository,
+[tspico-firmware-build](https://github.com/timex-sinclair-projects/tspico-firmware-build),
+where the ROM and v3 firmware changes will be made.
+
+**Status (2026-10-16):** specification only. No hardware, firmware or ROM
+change exists yet. Facts quoted from the 2068 ROM are from `src/rom/TSPICO-23.ROM`;
+those still to be checked on hardware are listed under [Open questions](#open-questions).
+
+## Contents
+
+- [Background](#background): the LarKen RAMdisk, Timex's expansion banks, and
+  why this design follows Timex
+- [The board](#the-board): what it does on the bus
+- [Registers](#registers): ports FCh/FDh
+- [Programming it](#programming-it): for people writing 2068 software
+- [Hardware](#hardware): parts, battery backup, the expansion bus
+- [Sharing the bus](#sharing-the-bus): the v3 card, PicoVideo, BUSISO
+- [ROM](#rom): what ROM 2.4 adds
+- [The RAM disk](#the-ram-disk): `r:`, the mover, the on-board format
+- [Firmware](#firmware): the v3 card's part
+- [PicoVideo](#picovideo)
+- [Testing](#testing)
+- [Phases](#phases)
+- [Open questions](#open-questions)
+- [Sources](#sources)
+
+## Background
+
+### The LarKen RAMdisk (1980s)
+
+LarKen Electronics' RAMdisk was the 2068's best-known RAM expansion: up to
+eight 32K static RAM chips with battery backup, for the LKDOS disk system.
+
+- One chip at a time appears in the **upper 32K of the DOCK bank**: the chip is
+  enabled when /MREQ and /ROSCS are low and A15 is high.
+- `OUT 7,n` picks the chip. Bits 0–2 select it (in a scrambled order LKDOS
+  undoes with a table: 7=A, 3=B, 5=C, 1=D, 6=E, 2=F, 4=G, 0=H), bit 6 enables
+  writes. The port is write-only and decoded from A7–A3 = 0 only, so it
+  answers all of 00h–07h.
+- A 74LS175 latch holds the bits and is cleared at power-up (chip H,
+  write-protected). A divider on the 2068's +15 V blocks writes while power
+  comes and goes.
+
+We first looked at emulating it on the TS-Pico itself (2026-10-16):
+
+- **v2 can't:** its port decode sees only 0Eh/0Fh, and its dock SRAM is a chip
+  the Pico can't read back.
+- **v3 could do 128K:** four spare 32K lanes in its image SRAM, switched by
+  patching one PIO instruction. But 256K needs the unfitted PSRAM, and the
+  result still lives in the DOCK, where it collides with cartridge images
+  and ZX48 mode.
+
+A separate board with real battery-backed SRAM is better on every count
+**(decided)**. LKDOS compatibility is dropped **(decided)**: this is for v3
+owners.
+
+### Timex's expansion banks
+
+The 2068 was designed for far more memory than it shipped with. The Timex
+*Third Party Software Guide* (TPSG, section 1) describes it:
+
+- **256 banks of 64K**, each split into eight 8K **chunks** selected by
+  A13–A15. Bank 255 is HOME, 254 is EXROM, 0 is DOCK, and **1–253 are
+  expansion banks**, the banks Wes Brzozowski called "the missing 253".
+- **Each chunk has exactly one owner at a time.** Expansion banks outrank
+  DOCK and EXROM, which outrank HOME. HOME owns every chunk nobody else
+  claims.
+- **An expansion bank takes a chunk by pulling BE low**, which switches off
+  all of the 2068's own memory (HOME, EXROM and DOCK selects) for that
+  access, whatever ports F4h and FFh say.
+- **The bus expansion unit's controller** was to hold, per bank, a
+  4-bit-interface "horizontal select" register naming the chunks it owns.
+  The TPSG puts its registers on ports FCh (data) and FDh (command). The
+  ROM that shipped uses a different, memory-mapped scheme gated by the AY
+  chip's IOA5 line (Brzozowski).
+- **The ROM carries a bank API** for it: `BANK_ENABLE`, `GOTO_BANK`,
+  `CALL_BANK`, `XFER_BYTES`, `GET_BANK_STATUS`, copied at boot from EXROM
+  1000h–162Fh to RAM at 6200h (F9C0h in 64-column mode), plus a bank table
+  (SYSCON) built by a boot-time search for banks.
+- **None of it ever worked.** No bus expansion unit shipped, and Brzozowski
+  (*Time Designs*, 1986–87) found the ROM code riddled with bugs: the boot
+  search would crash a 2068 that had a real bank. His advice: keep the
+  software model, fix the bugs, and replace only the two routines that touch
+  hardware (`READ_BS_REG`, `WRITE_BS_REG`). William Pedersen (*Nite-Times
+  News*, 1989) proposed the hardware shape used here: an 8-entry table of
+  chunk owners, indexed by A13–A15.
+
+### Why follow Timex
+
+**The DOCK-based approach has a wall:** bit 7 of port FFh picks EXROM or DOCK
+for every chunk at once. The TS-Pico ROM's own code runs from EXROM in chunks
+0–1, so it could never see a DOCK-mapped RAM page at the same time. Expansion
+banks sit above both and switch through BE, so:
+
+- the ROM can map RAM into chunk 4 while running from EXROM;
+- the DOCK stays free for the v3 card's cartridge images and ZX48 mode;
+- the 2068's own documented bank API can be made to work, for the first time.
+
+## The board
+
+**Size: 4 MB (decided)**: 512 pages of 8K, presented as **64 expansion
+banks** of 64K (banks 1–64 by default).
+
+**The chunk owner table.** Because a chunk has one owner, the board needs no
+register per bank, only one per chunk:
+
+- `OWN0`–`OWN7`: the bank number that owns chunk 0–7, or 0 for none.
+- `SUB0`–`SUB7`: which 8K of that bank appears there. Timex's model always
+  shows chunk *n* of a bank in chunk *n*, so a write to `OWNn` sets `SUBn` to
+  *n*. A program that writes a different `SUBn` afterwards can put **any page
+  in any chunk (decided)**.
+
+**On every memory cycle** the board looks up `OWN[A15:A13]`:
+
+1. If the owner is one of the board's banks, and /MREQ is low and /RFSH is high,
+   it pulls **/BE** low (open-drain).
+2. A read (/RD low) drives D0–D7 from SRAM. An M1 opcode fetch is a read like
+   any other, so code runs from the banks.
+3. A write (/WR low) stores the byte, unless that chunk is write-protected
+   (`WPROT`) or the write-protect switch is on. A refused write is dropped;
+   /BE is still pulled, so it doesn't fall through to the 2068's RAM either.
+4. Otherwise the board does nothing: no /BE, data bus untouched.
+
+**The SRAM address** is `page × 8K + A12..A0`, with
+`page = (owner − BASE) × 8 + SUB[chunk]` (0–511): 22 bits, the top 3 picking
+one of eight 512K chips.
+
+**Reset** (/RESET low): every `OWNn` = 0, `SUBn` = *n*, `WPROT` = 0. The
+2068 boots as if the board weren't there. The SRAM keeps its contents.
+
+**Bank numbers.** A two-position switch sets `BASE`, the first bank: 1, 65,
+129 or 193. Two boards can share a 2068 (8 MB), and bank numbers stay inside
+Timex's 1–253. With `BASE` = 193 only banks 193–253 (61) are usable.
+
+## Registers
+
+Two ports, decoded from A7–A0 only (A8–A15 ignored, like the v3 card):
+**FDh selects a register, FCh reads or writes it (decided).** These are the
+TPSG's BCMDPT and BDATPT. Taking FDh rules out emulating a Spectrum 128's AY
+(FFFDh/BFFDh) on the v3 card later; David prefers later Yamaha sound chips
+anyway **(decided)**.
+
+| Reg | Name | R/W | Reset | Meaning |
+|---|---|---|---|---|
+| 00h–07h | `OWN0`–`OWN7` | R/W | 00h | Owner of chunk 0–7: an expansion bank 1–253, or 0 for none. 0, FEh and FFh all mean "none". A write also sets `SUBn` = *n*. |
+| 08h–0Fh | `SUB0`–`SUB7` | R/W | *n* | Bits 0–2: the 8K of the owning bank that appears in chunk *n*. Bits 3–7 read 0. |
+| 10h | `WPROT` | R/W | 00h | Bit *n* set: writes to chunk *n* are dropped while the board owns it. |
+| 11h | `STATUS` | R | – | Bit 0: write-protect switch on. Bit 1: battery low. Other bits 0. |
+| 12h | `ID` | R | – | A5h, the signature. |
+| 13h | `IDCOMP` | R | – | 5Ah, its complement (an absent board reads FFh twice). |
+| 14h | `BASE` | R | – | The first bank number: 1, 65, 129 or 193. |
+| 15h | `SIZE` | R | – | Banks fitted: 8, 16, 32 or 64 (jumpers, for boards built with fewer chips). |
+| 16h | `VERSION` | R | – | Board/logic version, starting at 1. |
+
+- **IN FDh** reads back the selected register number, so an interrupt handler
+  can save and restore it.
+- **No auto-increment**, so a device watching the bus (the v3 card, PicoVideo)
+  follows the state from the writes alone: the last value written to FDh,
+  then the value written to FCh.
+- Unused register numbers read FFh and ignore writes.
+- **Detecting the board:** `OUT (FDh),12h`, `IN A,(FCh)` gives A5h, then
+  `OUT (FDh),13h`, `IN A,(FCh)` gives 5Ah. Anything else: no board.
+
+## Programming it
+
+For people writing 2068 software, with or without the ROM's help.
+
+**Map a page.** Put page 2 of bank 5 into chunk 4 (8000h–9FFFh):
+
+```
+        di
+        ld   a,04h        ; OWN4
+        out  (0FDh),a
+        ld   a,5          ; bank 5; this also sets SUB4 = 4
+        out  (0FCh),a
+        ld   a,0Ch        ; SUB4
+        out  (0FDh),a
+        ld   a,2          ; page 2 of bank 5
+        out  (0FCh),a
+        ei
+```
+
+Unmap it by writing 0 to `OWN4`. For Timex-style use (chunk *n* of the bank in
+chunk *n*), the first two `OUT`s are enough.
+
+**Rules.**
+
+- **Don't pull the floor out from under yourself.** Never map over the chunk
+  holding the code that's running, or the stack, without moving them first.
+- **Interrupts.** A register change is two `OUT`s. If an interrupt handler
+  also uses the board, keep `DI` around the pair, or have the handler save
+  `IN (FDh)` and restore it.
+- **Chunks 0–1 hold the ROM** and the IM 1 handler at 0038h. Mapping RAM there
+  is allowed (a 64K-RAM machine), but it is your job to have a handler at 0038h
+  or to run with interrupts off or in IM 2.
+- **Chunk 3 (or chunk 7 in 64-column mode)** holds the 2068's bank-switching
+  code and the machine stack. Timex's rules reserve it. Map over it only if you
+  know you don't need either.
+- **The screen.** Mapping a bank into chunk 2 (4000h–5FFFh) hides the screen
+  memory from the Z80, not from the display: the 2068 keeps showing its own
+  RAM. Writes there go to the bank.
+- **The RAM disk's banks** belong to the RAM disk ([below](#the-ram-disk)).
+  Ask the ROM for pages rather than picking bank numbers yourself.
+
+**Speed.** `LDIR` moves a byte in 21 T-states: about 160 KB a second at the
+2068's 3.53 MHz. A 6K screen copies out of a bank in about 40 ms.
+
+## Hardware
+
+The board's job is simple but its battery backup has to be right. Parts are
+candidates; availability is open question 6.
+
+| Function | Part (candidate) | Notes |
+|---|---|---|
+| Memory | 8 × AS6C4008 (512K×8, 5 V, 55 ns, SOP-32 or DIP-32) | 4 MB. Fewer chips for a cheaper build; `SIZE` jumpers say how many. |
+| Logic | ATF1508AS (5 V CPLD, 128 macrocells, PLCC-84 or TQFP-100) | Port decode, the 18 registers (about 100 flip-flops), the owner lookup, /BE, SRAM address and enables. A 1504 (64 macrocells) is too small. |
+| Data buffer | 74HCT245 | Between the bus and the SRAM data lines: isolates the SRAM when the board isn't selected or the 2068 is off. |
+| /BE driver | open-drain (74HCT05, or the CPLD's open-collector option) | Wire-ORs with the v3 card's 74LVC06. |
+| Power mux | ideal-diode switch (TPS2115A class) | Feeds the SRAM rail from +5 V or the battery. **Not plain diodes:** with VCC on, the SRAM rail must sit within a few tenths of a volt of 5 V, or 5 V address and data lines push current into it through its input clamps. LarKen's 1N914s dropped 0.7 V. |
+| Chip enables | 74HC138 on the SRAM rail, enable from the supervisor | The eight /CE lines come from a decoder powered by the battery, with pull-ups to that rail, so they stay high when VCC is off. The CPLD (on VCC) only drives the decoder's select inputs. |
+| Supervisor | voltage supervisor on +5 V (TPS3839 class, ~4.5 V threshold) | Holds the decoder disabled while +5 V is below threshold: no writes while power rises or falls. Replaces LarKen's +15 V divider. |
+| Battery | 2 × AA holder, or CR2477 | AS6C4008 standby is a few µA typical per chip at room temperature (check the datasheet's worst case): eight chips on 2 × AA should last years, on a CR2032 perhaps a year. Measure the real board. |
+| Battery monitor | comparator on the battery, powered from VCC | `STATUS` bit 1 below about 2.5 V. |
+| Switches | write-protect slide switch; `BASE` (2 bits); `SIZE` (2 bits) | |
+
+**Timing.** The 2068's memory cycles leave about 300 ns from address to data;
+55 ns SRAM and a CPLD (7–10 ns) through a buffer fit with room to spare. The
+critical path is **/BE**: it has to switch off the 2068's own memory before
+that memory drives the bus. The v3 card already asserts /BE early, from
+A13–A15 on a memory read. The board decodes from A13–A15 plus the owner table,
+gated by /MREQ, which is comparable, but it must be measured on a 2068 through
+the expansion bus (open question 2).
+
+**Refresh.** On a refresh cycle (/RFSH low) the board stays off the bus and
+leaves /BE alone, so it never interferes with the 2068's DRAM refresh.
+
+**Form factor.** A standard card for the expansion bus card (TS2068_Extender):
+three slots and a pass-through, of which the TS-Pico and PicoVideo normally
+take two. The board needs no pass-through of its own.
+
+## Sharing the bus
+
+Three cards may answer memory cycles: the 2068 itself, the v3 card (HOME and
+EXROM with /BE, DOCK without), and this board. Only one answers any access,
+and none of it depends on BUSISO or IOA5:
+
+- **The board answers only chunks whose owner is one of its banks.**
+- **The v3 card watches the FDh/FCh writes** and stops serving any chunk whose
+  owner is 1–253 ([Firmware](#firmware)). Without that, a DOCK chunk would
+  have two drivers: /BE switches off the 2068's memory but not the v3 card.
+- **/BE is open-drain on both cards**, so they never fight electrically.
+- **PicoVideo watches the same writes** and stops copying screen writes into
+  its display when chunk 2 or 3 is owned by a bank ([PicoVideo](#picovideo)).
+- **The ROM writes every `OWNn` = 0 at boot**, even though the board clears
+  them on reset. PicoVideo can't see /RESET and the v3 card keeps its
+  shadows through a plain reset, so the boot-time writes resynchronise every
+  device that watches.
+
+**BUSISO is not used.** On the TS2068_Extender, a per-slot jumper feeds /BE
+to the BUSISO pin of the next-lower slot, so a device there can hold off its
+own /BE. The TS-Pico goes in slot 1 with its jumper open (closed, it sees
+its own /BE and stops working). This board goes in any free slot, jumper
+open, and arbitrates through the owner table instead.
+
+**IOA5 is not used.** It is free on the bus, and the shipped ROM's bank
+protocol gated register writes with it. But it is a pin of the AY's port A,
+whose direction is bit 6 of AY register 7, the register that also mixes the
+tone and noise channels. Sound code commonly writes all of R7, so it would
+flip IOA5 under the board's feet; port A also carries the joysticks. Ports
+FCh/FDh do the job without that hazard **(decided)**.
+
+## ROM
+
+ROM 2.4 is ROM 2.3 plus patches, built the usual way: `tools/build-rom.py`
+byte patches that state the bytes they replace, and new code in the module.
+Addresses below are EXROM addresses (X) and, for the bank code that runs from
+RAM, the RAM address (RAM = X + 5200h; in 64-column mode the code runs 97C0h
+higher). All were read from `src/rom/TSPICO-23.ROM` and compared with the
+genuine EXROM (`ROMs/GENUINE-2068-exrom.bin`, the same as ZEsarUX's).
+
+### What ROM 2.3 does with the board
+
+**Nothing, safely.** The boot still runs Timex's bank search (X0A3E–X0DAF). It
+probes for banks through the memory-mapped, IOA5-gated registers. A board that
+answers only ports FCh/FDh reads as absent, so the bank count stays 0:
+`MAXBNK` (5CBEh) and the copy every bank routine reads, at 6315h. Every bank
+routine then takes its fast path. A board on a 2068 with ROM 2.3 is invisible
+until software writes its registers directly.
+
+**Why the bank count must stay 0 until the bank code is rewritten.** Every
+`tpi:` command crosses between HOME and EXROM through `CALL_BANK` and
+`GOTO_BANK`, and so does every interrupt that arrives while the EXROM is
+mapped (the handler at 62AEh). With a nonzero count:
+
+- each crossing loops over every bank in `SAVE_STATUS`, `BANK_ENABLE` and
+  `RESTORE_STATUS`, through the slow memory-mapped register routines (an
+  estimated 45 ms per crossing with 64 banks);
+- every call that asks for all chunks as HOME (`FF00`, which the TS-Pico's own
+  crossings use) first takes every chunk from every expansion bank, so a
+  program's mapped pages would vanish behind each ROM call.
+
+So the minimal ROM leaves the count at 0, and the Timex API doesn't know the
+board exists. The RAM disk and programs use the registers directly.
+
+### Minimal ROM: detection, reset, mover, `r:` (phase 4)
+
+1. **Replace the bank search.** A `JP` at X0A3E to new code frees the old
+   search's body, X0A3E–X0DAF: 882 bytes in EXROM chunk 0, which today has
+   about 84 bytes free. It is entered two ways, both landing at X0A3E: `CALL 0A3E`
+   at X1CA8 (the boot path taken when D is held at power-on, undocumented
+   until now) and the fall-through from X09F4, which reads the DOCK's
+   LROS/AROS headers on the normal path. The block X0C4C–X0CFA is reachable only
+   from HOME 2487h, which nothing calls. (To verify when patching: no other
+   entry into the range.) The new code:
+   - writes `OWN0`–`OWN7` = 0 and `WPROT` = 0, so every device watching the bus
+     starts in step;
+   - checks `ID`/`IDCOMP`, reads `BASE`, `SIZE` and `STATUS`;
+   - reports them to the TS-Pico (how: open question 3);
+   - leaves `MAXBNK` and 6315h at 0;
+   - ends as the old code did: `CALL 2082h` (writes SYSCON's 80h end marker).
+     The old code also called the renumbering at X0CFB, which does nothing with
+     no banks; keep or drop it once checked.
+2. **The mover** ([The RAM disk](#the-ram-disk)): the operation loop, the
+   window choice and the copy loops, in EXROM chunk 1's free space
+   (23D4h–2FFFh, 3116 bytes, and 37B5h–3FFFh, 2123 bytes). Estimated under 512
+   bytes.
+3. **The `r:` prefix**: a test in `F_HOOK` (`fddcmd.asm` 585) beside the
+   `f:` one, a new TPMODE bit (bits 7 and 6 are `tpi:` and `net:`), and the
+   tape block routines calling the mover when it is set. `CAT`, `ERASE`,
+   `MOVE` and `FORMAT` already reach the firmware as `tpi:` strings, so `r:`
+   names need firmware work only.
+
+### The Timex bank API on the board (phase 8)
+
+The owner table makes this much cheaper than Timex's design: the state the
+API loops over, one register set per bank, is just 16 bytes on this board
+(`OWN0`–`OWN7`, `SUB0`–`SUB7`), whatever the bank count.
+
+1. **Rewrite `WRITE_BS_REG` and `READ_BS_REG`** (RAM 635Ch–6404h, X115C–X1204,
+   169 bytes, contiguous) as a translation onto the ports. Keep both entry
+   points: their callers and the 64-column fixups (X1D2A, 2C, 2E, 36) use them.
+   - A BNA write (register 80h) goes to a RAM latch.
+   - An HS write (40h) for bank *b*: `OWNn` = *b* for each bit set; `OWNn` = 0
+     where `OWNn` was *b* and the bit is clear.
+   - A universal deselect (A0h with BNA 0): `OWNn` = 0 for each bit set.
+   - A status read: present (bit 2 = 0) if *b* is within `BASE`…`BASE+SIZE−1`.
+   - This also removes a bug: today's `READ_BS_REG` copies the screen byte at
+     4000h into 8000h on its way out.
+2. **Rewrite `SAVE_STATUS` and `RESTORE_STATUS`** (651Eh/654Ah) to save F4h,
+   FFh and the 16 board bytes: constant time instead of a loop per bank.
+   `CALL_BANK` reserves (bank count + 2) bytes per frame for this; that size
+   changes to match. `RESTORE_STATUS` writes FFh before F4h, which briefly
+   maps the DOCK: keep it under `DI`, as the TS-Pico's crossings already are.
+3. **Only then** set `MAXBNK` and 6315h to the bank count.
+4. **Narrow the TS-Pico's own crossings** from "all chunks to HOME" (`FF00`)
+   to chunks 0–1 (`FFFC`, the mask is active-low), so a program's pages in
+   chunks 2–7 survive ROM calls. Check each: HOME 3CE3h and 0A50h, HOME 03FCh
+   (through 040Dh), EXROM 03DDh, 08DDh, the error path at 0017h–002Dh, and the
+   interrupt handler at 62AEh.
+5. **Fix the 64-column relocation table.** Four of its 61 entries are wrong
+   (X1D34: 64ACh should be 64A9h; X1D38: 650Eh → 650Fh; X1D3A: 6516h → 6517h;
+   X1D68: 674Fh → 6744h). In 64-column mode they break `BANK_ENABLE`'s
+   expansion-bank paths and all of `XFER_BYTES`. Harmless today, because the
+   count is 0. A patch to the EXROM image reaches both copies, since the high one
+   is copied from the low.
+6. **Brzozowski's patches.** All ten sites still hold the genuine bytes in ROM
+   2.3, so every bug is present:
+
+   | RAM | X | Now | New | Fixes |
+   |---|---|---|---|---|
+   | 649A | 129A | C5 | F3 (DI) | `BANK_ENABLE` not atomic |
+   | 651B | 131B | C1 | FB (EI) | same |
+   | 66DF | 14DF | 75 | 73 | `MOVE_BYTES` stores HL instead of DE |
+   | 66E2 | 14E2 | 74 | 72 | same |
+   | 66F3–66F5 | 14F3 | 07 0F 38 | 0B 3C 28 | `CREATE_BITMAP` end byte |
+   | 6722 | 1522 | F5 | 00 | `XFER_BYTES`: drop `PUSH AF` |
+   | 672B | 152B | 0A | 08 | its parameter offset |
+   | 676A | 156A | 47 | 5F | `XFER_BYTES` same-bank mask |
+   | 67C2 | 15C2 | 2B | 2C | keep A = 01 on abort |
+   | 67FF | 15FF | F1 | 00 | drop `POP AF`; A returns 00 done, 01 aborted |
+
+   Two cautions. His `EI` is unconditional, which would re-enable interrupts
+   inside the TS-Pico's own `DI` sections: restore the previous state instead
+   (`LD A,I` gives it in P/V). And the `XFER_BYTES` patches change A on return;
+   the old bank search relied on it, but the minimal ROM removes that code, and
+   the remaining callers (HOME 1899h, 1E0Dh) don't use A.
+7. **For the whole API**, also: `GET_STATUS` returns the mask in C for
+   expansion banks but in B for the others; `GET_NUMBER` is broken once banks
+   exist (its `DJNZ` count is overwritten by `GET_STATUS`, and its EXROM test is
+   unreachable); `PUT_WORD`'s `LD D,B` destroys D before storing it; Timex
+   Technical Manual fixes 6.5.2–6.5.6.
+
+Items 1–5 make `BANK_ENABLE`, `GOTO_BANK`, `CALL_BANK` and `XFER_BYTES` work
+with the board; 6 and 7 complete the API. Which of these to do is open
+question 5.
+
+**Two reference gaps** found on the way, for the programmer's reference
+whatever happens to this plan: the TS-Pico ROM changes `CALL_BANK` at X1410
+(`LD B,(IX+08h)` → `LD B,(IX+09h)`, apparently a fix: the genuine code read
+PARAM_IN's low byte twice), and the boot's D-key path at X1C86, which skips the
+DOCK header read. Neither is in `docs/reference/rom/`.
+
+
+## The RAM disk
+
+**The split: the v3 card keeps the file system, the Z80 moves the bytes.**
+The TS-Pico can't reach the board's memory, but the Z80 can, at `LDIR`
+speed. So:
+
+- **The firmware** (Python, on the v3 card) owns the directory, allocation,
+  names, `CAT` output and errors. It is written and host-tested like the rest
+  of the firmware, and costs no ROM space.
+- **The ROM** runs a small loop, the **mover**, that does what the firmware
+  tells it, one operation at a time, over the existing port 0Eh link.
+- **The file system's data lives on the board**, so it survives power-off
+  with the files. The firmware holds only a cache.
+
+### The mover's operations
+
+The firmware sends an operation; the ROM does it and replies with a status
+byte. All lengths are 1–65535; "page:offset" is an 8K page (0–511) and an
+offset into it, and a transfer may cross pages.
+
+| Op | Does | Used by |
+|---|---|---|
+| 1 | Copy *len* bytes of 2068 memory at *addr* to page:offset | SAVE |
+| 2 | Copy page:offset to 2068 memory at *addr* | LOAD, MERGE |
+| 3 | Compare page:offset with 2068 memory at *addr*; reply with the result | VERIFY |
+| 4 | Send page:offset to the TS-Pico through port 0Eh | reading the directory; MOVE from `r:`; backup |
+| 5 | Receive bytes from the TS-Pico into page:offset | writing the directory; MOVE to `r:`; restore |
+| 6 | Copy page:offset to page:offset (both on the board) | compaction |
+| 0 | Done; carries the report code to end the command with (0 = OK) | every command |
+
+**How the mover maps a page.** For each piece of a transfer that lies in one
+8K chunk of 2068 memory, it picks a **window chunk** from 4–7 that holds
+neither that piece nor the stack. With four candidates and at most two
+excluded, one is always free. Then, with interrupts off:
+
+1. Save `OWNw` and `SUBw` (read back through FCh).
+2. Map the page: `OWNw` = its bank, `SUBw` = its 8K.
+3. `LDIR` (or `CPIR`-style compare, or `INIR`/`OTIR`-style port transfer).
+4. Restore `OWNw` and `SUBw`, re-enable interrupts.
+
+The mover runs from EXROM chunks 0–1 and never maps a window there, so it
+never unmaps itself. It doesn't depend on the Timex bank API, so the RAM disk
+can ship before that API is fixed ([Phases](#phases)).
+
+### From BASIC
+
+| Command | Does |
+|---|---|
+| `SAVE "r:name" …` | every form `SAVE` takes: `LINE`, `CODE`, `SCREEN$`, `DATA` |
+| `LOAD "r:name"`, `VERIFY "r:name"`, `MERGE "r:name"` | as from tape, with the same reports |
+| `CAT "r:"` | the directory, with free space |
+| `ERASE "r:name"` | delete |
+| `MOVE "tpi:name" TO "r:name"`, and back | copy between the SD card and the RAM disk; MOVE copies, as it does today |
+| `FORMAT "r:"` | create an empty RAM disk (asks Y/N, as `tpi:` FORMAT does) |
+| `SAVE "tpi:ram backup name"` / `"tpi:ram restore name"` | the whole RAM disk to or from an image file on the SD card |
+| `SAVE "tpi:ram"` | board found or not, `BASE`, `SIZE`, battery, write-protect switch, RAM disk size and free space |
+
+Names follow the tape rules (up to 10 characters), so a file moves between
+tape, SD card and RAM disk unchanged. Because `LOAD "r:name"` goes through
+the ROM's own LOAD, a BASIC program, arrays and `SCREEN$` all behave exactly as
+they do from tape.
+
+### Where it lives on the board
+
+The RAM disk occupies **the top of the board's banks**, growing down; banks
+below it are free for programs. `FORMAT "r:"` asks for a size (default: half
+the board).
+
+- **Superblock** in the first 256 bytes of the RAM disk's top page: a magic
+  number ("TSRD"), format version, the first and last page of the RAM disk, the
+  cluster size, a **generation counter**, and a checksum.
+- **Allocation bitmap** and **directory** in the rest of the top page(s).
+  A directory entry is 32 bytes: the name, the 17-byte tape header's fields
+  (type, length, start, program/array parameters), the first cluster and
+  length, flags.
+- **Files are contiguous**, in 1K clusters, and files of 8K or more start on a
+  page boundary. A program can then map a file's pages directly: `LOAD
+  "r:icons"` once, then page the icons in by number. When free space is too
+  fragmented for a new file, the firmware compacts the disk with op 6.
+- **Caching.** The firmware reads the superblock (op 4, 256 bytes) at the start
+  of every `r:` command and re-reads the directory only if the generation
+  counter changed. Every change to the directory increments it. That covers
+  resets, power cycles and a second TS-Pico.
+
+**Allocating pages for a program**, so programs and files never collide, is
+a `tpi:ram alloc` command that reserves pages below the RAM disk and records
+them in the superblock. Its exact form is for the GUI author to shape (open
+question 8).
+
+## Firmware
+
+All on the v3 card; v2 is out of scope **(decided)**.
+
+**Core 1 (C, `tsbus.c`): share the bus.**
+
+1. In the OUT snoop (`tsbus.c` 858–906, beside the F4h/FFh shadow): port FDh
+   stores the register number; port FCh, when that number is 00h–07h, stores
+   the owner in `sh_own[n]` and resets `sh_sub[n]`. A change rewrites the
+   chunk table.
+2. `chunk_target` (`tsbus.c` 322) returns `tail` (not ours) for any chunk with
+   `sh_own[c]` in 1–253, before looking at F4h and FFh.
+3. The DOCK-write path (`tsbus.c` 908) skips owned chunks.
+4. `sh_own` clears at power-on and on the card's own reset handling, and is
+   resynchronised by the ROM's boot-time writes.
+
+That's a few dozen lines on the existing, proven path: the same mechanism
+that already follows F4h and FFh. Owner writes are I/O cycles, which last
+over a microsecond, so the table is current before the next memory read.
+
+**Core 0 (Python): the RAM disk.** A new module beside `extcmd.py`:
+
+- the `r:` file system: the format above, allocation, compaction;
+- the mover's side of the protocol: sending operations, checking status;
+- the `CAT`/`ERASE`/`MOVE`/`FORMAT` handlers for `r:` names;
+- `tpi:ram` (info, backup, restore, alloc);
+- what the ROM reports at boot: board found, `BASE`, `SIZE`, `STATUS`.
+  The firmware can't read the board itself, since it can't run bus cycles.
+
+## PicoVideo
+
+PicoVideo (github.com/timex-sinclair-projects/PicoVideo, v4.2) already sees
+everything it needs: its GAL passes every I/O cycle to the Pico, and every
+memory write to 4000h–7FFFh. It already skips a screen write when port F4h
+maps chunk 2 or 3 away from HOME. The change, in `coreB/busMain.c`:
+
+1. Two cases in the I/O-write `switch (gZ80AdrL)`: FDh stores the register
+   number; FCh stores the value if that number is 02h or 03h (the owners of
+   chunks 2 and 3). PicoVideo needs only whether a bank owns the chunk, not
+   which 8K it shows, so it ignores `SUB`.
+2. The two memory-write tests skip the write when the chunk's owner is 1–253,
+   alongside the existing F4h tests.
+
+About 15 lines. It applies unchanged to an RP2350 re-spin. The boards already
+built need only a new UF2. **Without the update,** a PicoVideo shows stray
+writes whenever a program maps a bank into chunk 2 or 3; nothing else is
+affected.
+
+While there: `case 0xF4:` has no `break` and falls into `case HIRES_ADRL`,
+so every `OUT F4h` also overwrites the low byte of the hi-res address. One
+line to fix.
+
+## Testing
+
+**Before any hardware** (David can do the first today, on a bare 2068):
+
+1. **Does the 2068 itself answer FCh or FDh?** The Spectrum's ULA answers
+   any even port. If the 2068's SCLD decodes FEh partially, `OUT 252,n` would
+   change the border and `IN 252` would read the keyboard, colliding with the
+   board. In BASIC: `OUT 252,2` (border red?), `OUT 253,2`, and
+   `PRINT IN 252, IN 253` with no keys pressed (FFh means nobody answered). Timex
+   assigned these ports, so the SCLD probably ignores them, but it decides the
+   design, so check it first (open question 1).
+2. **An emulator model.** Add the board to our ZEsarUX fork (memory reads and
+   writes through the owner table, ports FCh/FDh). The ROM and firmware can
+   then be developed and tested with no hardware, through the existing
+   `tools/emu` bridge.
+3. **ROM host tests** for the mover's window choice and the boot-time
+   detection, in the style of the existing `rom_*_hosttest.py`.
+4. **Firmware host tests** for the file system: format, save/load/erase,
+   fragmentation and compaction, a corrupt superblock, the generation counter.
+
+**On hardware:**
+
+1. A prototype on the extender, with a scope on /BE, /MREQ, /RD and D0–D7, in
+   every slot: /BE must win against the 2068's own memory with margin
+   (open question 2).
+2. A memory test from the 2068: every page, every chunk, pattern and
+   address-in-address, with the v3 card and PicoVideo both plugged in.
+3. Battery: fill the board, power off for a day, verify; measure the standby
+   current.
+4. Power-fail: switch off during a long `SAVE "r:"`. Other files must survive;
+   the one being written may be lost.
+5. The RAM disk end to end: every SAVE/LOAD form, MOVE both ways, backup and
+   restore, a full disk, compaction.
+6. `tools/hwcheck.py` grows a RAM-board section.
+
+## Phases
+
+Each phase is its own branch and PR, and each PR updates the programmer's
+reference for what it changes.
+
+1. **Port test** on a bare 2068 (testing step 1). Decides whether FCh/FDh
+   stand.
+2. **Emulator model** in the ZEsarUX fork.
+3. **v3 firmware: bus sharing** (core 1). Small, and testable in the emulator
+   and on a v3 card with no board (nothing changes until something writes
+   FDh/FCh).
+4. **ROM: detection, boot reset and the mover**, plus the `r:` hook.
+5. **Firmware: the RAM disk** and `tpi:ram`.
+6. **PicoVideo** update (its own repo).
+7. **Board:** schematic, CPLD logic, PCB, prototype, hardware tests. Can run
+   in parallel with 2–6 once the register map is agreed.
+8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
+   Last, because nothing above depends on it. David leans towards only what
+   the board and RAM disk need, and is open to the whole API (open question 5).
+
+## Open questions
+
+1. **Do ports FCh/FDh collide with the 2068 itself?** Testing step 1, on a
+   bare 2068. If the SCLD answers them, the registers move to another pair.
+2. **/BE timing** through the expansion bus, in every slot, with the v3 card
+   and PicoVideo fitted. Measured on the prototype.
+3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
+   or a field in an existing boot exchange. Decided when the ROM work starts,
+   with `docs/PROTOCOL.md`.
+4. **A write fence for the RAM disk?** `WPROT` protects only chunks that are
+   mapped. A program that maps a RAM disk page by mistake can still corrupt
+   files. A `FENCE` register (banks at or above it are read-only unless
+   unlocked) would close that, at the cost of a register the ROM must set at
+   boot.
+5. **Scope of the Timex bank API work**
+   ([ROM](#the-timex-bank-api-on-the-board-phase-8)): items 1–5 (the API
+   works with the board) or all of it. David leans towards the minimum.
+6. **Parts:** availability and price of the AS6C4008, the ATF1508AS (and a
+   toolchain for it: WinCUPL is Windows-only and dated), the power mux, the
+   supervisor and the battery holder.
+7. **A name** for the board.
+8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
+   allocation from BASIC, a machine-code entry point, a page size other than
+   8K? Worth showing them this document.
+9. **SYSCON entries for RAM banks.** SYSCON holds at most 10 entries (its
+   scratch space at 5FE9h–5FFFh is hard-coded). Nothing validates bank numbers
+   against it, so RAM banks may not need entries at all; decide in phase 8.
+10. **The bank stack** holds 16 frames of 4 bytes with no overflow check.
+    Deep `CALL_BANK` nesting could overrun it. Phase 8.
+
+## Sources
+
+- LarKen Electronics, *Assembling the LARKEN RAMDISK* and *Adding the LARKEN
+  RAMDisk to existing LKDOS System* (scans from David, with the 256K
+  schematic, the parts placement diagram, and Jack Dohany's 2 × 128K
+  variant).
+- Timex Computer Corp., *Timex Sinclair 2068 Third Party Software Guide*,
+  section 1 (memory and banks) and section 6 (SYSCON, the bank API);
+  Technical Memo #0006, Connector Specification. Both in the archive.org item
+  `timex-computer-corp`.
+- Wes Brzozowski, "The Mystery of the Missing 253" and its four follow-ups,
+  *Time Designs*, 1986–87, on timexsinclair.com.
+- William Pedersen, "Bank Switching the Timex Sinclair 2068 Computer", parts
+  I–IV, *T-S Horizons* #19–21; "TS 2068 Memory Expansion", *Nite-Times News*
+  v3n2, 1989; both on timexsinclair.com.
+- L. Crawford, "Other uses for the T/S 2068 LarKen RAMdisk", *Update*, April
+  1990, on timexsinclair.com.
+- PicoVideo v4.2, github.com/timex-sinclair-projects/PicoVideo
+  (`PICOVID.PLD`, `coreB/busMain.c`).
+- TS2068_Extender v2.1, github.com/timex-sinclair-projects/TS2068_Extender.
+- This repository: `src/rom/TSPICO-23.ROM`, `ROMs/GENUINE-2068-exrom.bin`,
+  `src/tsbus/tsbus.c` and `tsbus.pio`, `docs/reference/rom/`.
