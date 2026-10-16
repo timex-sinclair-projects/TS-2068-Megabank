@@ -283,7 +283,7 @@ question 4), new registers, settings, all through a firmware update.
 | Page bits: 8 to SRAM A13–A20 (the 9th picks the chip, through the /CE1s) | 8 |
 | /CE1 of each SRAM, write inhibit, data buffer enable | 4 |
 | Write-protect switch | 1 |
-| Battery: ADC and its switch | 2 |
+| Battery: ADC (GPIO40–47) and BAT_EN | 2 |
 | **Total** | **42 of 48** |
 
 The data buffer's direction comes from the buffered /RD, not from a pin.
@@ -305,7 +305,7 @@ Candidates, with JLCPCB stock on 2026-10-16. Availability is open question 6.
 | Power mux | LM66200 (ideal-diode ORing, 1.6–5.5 V, 1.32 µA) | C3235556 | Feeds the SRAM rail from 3.3 V or the battery. **Not the TPS2115A:** it draws about 55 µA from the battery, which would empty a coin cell in months. **Not plain diodes:** with 3.3 V on, the SRAM rail must stay close to 3.3 V, or the buffers and the controller push current into the SRAM's input clamps. |
 | Supervisor | TPS3839G33 on 3.3 V (threshold about 3.08 V) | C485802 | Drives both chips' CE2 directly: high while 3.3 V is good, low below the threshold, and the pull-down holds them low with 3.3 V gone. So no writes happen while power rises or falls, well above the SRAM's 2.2 V minimum. Push-pull output, so CE2 needs no pull-up; its output is undefined below 0.6 V, which is what the pull-down covers. Its 200 ms delay keeps the SRAM deselected for 200 ms after power-on: harmless, since nothing maps a bank until software writes the registers. |
 | Battery | CR2032 in an SMD holder (a CR2450 clip for longer life) | C22363833, C7498149 | Two CY62167EV30s in standby (1.5 µA typical, 3.0 µA maximum at 25 °C and 3.5 µA at 40 °C, each) plus the mux (1.3 µA): about 8.5 µA worst case at room temperature, so about three years on a CR2032 and eight on a CR2450. At 85 °C the chips' maximum is 12 µA each. Data is kept down to 1.5 V. Measure the real board. |
-| Battery monitor | The RP2350B's ADC, through a MOSFET it switches on only to measure | | So the battery never feeds the unpowered RP2350's pins. `STATUS` bit 1 below about 2.5 V. |
+| Battery monitor | The RP2350B's ADC, through a switched divider | | [Battery monitor](#battery-monitor). `STATUS` bit 1 below 2.5 V. |
 | Switch | Write-protect, SMD slide | | |
 | Pull resistors | 6 × 10 k, 0603 (0603WAF1002T5E) | C25804 | JLCPCB basic part, as on v3: no loading fee. **To ground:** CE2 (one, for both chips), each chip's /CE1 (two), the /BE request into the 74LVC1G06 (one, so boot does not rely on the RP2350's internal pull-down and its E9 erratum). **To 3.3 V:** write inhibit (one), the data buffer's /OE (one). 10 k on CE2, not 100 k: CE2 must stay under 0.2 V on battery, and two chips' input leakage (up to about 1 µA each) would put 0.2 V across 100 k; with 3.3 V on, the supervisor still gives at least 2.9 V into it (VDD − 0.4 V at 0.5 mA). The /CE1s are pulled *down*: a pull-up to the SRAM rail would feed the unpowered RP2350B. |
 | BHE/BLE links | 2 × 0 Ω, 0603 (0603WAF0000T5E) | C21189 | JLCPCB basic. BHE and BLE to ground: fitted for the EV30, do-not-place for a DV30 build. |
@@ -320,6 +320,39 @@ specifies standby with every input at a rail.)
 0.7 V while signals switch (0.8 V static), so keep ground bounce down; and
 the chip wants a 100 µs supply ramp and 200 µs before full operation, which
 the RP2350B's boot more than covers.
+
+### Battery monitor
+
+The coin cell is measured straight off its terminal, before the LM66200,
+through a switch that is off whenever the controller is unpowered or booting,
+so the battery never feeds the RP2350B's ADC pin. All parts are JLCPCB basic.
+
+| Net | Connects |
+|---|---|
+| BATT+ | Battery +, LM66200 IN2, Q1 source, R3 |
+| Q1 gate | Q1 gate, R3, Q2 drain |
+| Divider top | Q1 drain, R1 |
+| ADC | R1, R2, C1, RP2350B ADC pin (one of GPIO40–47) |
+| BAT_EN | RP2350B GPIO, Q2 gate, R4 |
+| GND | Q2 source, R2, C1, R4 |
+
+| Ref | Part | LCSC | Notes |
+|---|---|---|---|
+| Q1 | AO3401A, P-channel, SOT-23 | C15127 | Source to the battery. Turns on at about 0.9 V gate drive, so it works down to a 2.0 V cell. Its body diode points at the battery and never conducts, since the drain side is never above it. |
+| Q2 | AO3400A, N-channel, SOT-23 | C20917 | Pulls Q1's gate to ground when BAT_EN is high. Threshold at most 1.45 V: margin on a 3.3 V GPIO. |
+| R1, R2 | 100 k, 0603 | C25803 | Halves the cell (2.0–3.3 V) to 1.0–1.65 V, clear of the ADC's 3.3 V full scale. 16 µA only while measuring. R2 also holds the ADC pin at 0 V when off. |
+| R3 | 1 M, 0603 | C22935 | Holds Q1's gate at the battery: off. |
+| R4 | 10 k, 0603 | C25804 | Holds BAT_EN low while the controller is unpowered or booting. The same part as the other pull resistors. |
+| C1 | 100 nF, 0603 X7R | C14663 | A low-impedance source for the ADC's sampling capacitor. |
+
+**Off,** the battery's only load here is the two MOSFETs' leakage, well under
+a microamp. **To measure,** the controller drives BAT_EN high, waits 25 ms (the
+divider and C1 settle with a 5 ms time constant, 50 k × 100 nF), averages a
+few ADC readings, and drives BAT_EN low again: battery = 2 × reading ×
+3.3 V / 4096. It sets `STATUS` bit 1 below 2.5 V, at boot and perhaps hourly
+after. While 3.3 V is present the LM66200 runs from it, so the reading is the
+idle cell; a lithium coin cell holds near 3.0 V most of its life and falls
+near the end, so 2.5 V is a late warning, not an early one.
 
 ### Timing
 
@@ -740,8 +773,6 @@ reference for what it changes.
      (a pull-down that latches), or don't rely on internal pull-downs.
    - **The slot connection:** gold fingers (no part; JLCPCB charges for the
      gold and the bevel) or a connector, which may be through-hole.
-   - **The battery monitor's switch:** draw it, then pick its MOSFET and
-     resistors.
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
