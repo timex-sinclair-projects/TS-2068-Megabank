@@ -40,6 +40,6 @@ pressed. If not, the registers move to another port pair.
 
 | What | Licence | File |
 |---|---|---|
-| Hardware design files (schematic, PCB, CPLD logic as a design) | CERN Open Hardware Licence v2, Permissive (CERN-OHL-P-2.0) | [LICENSE-hardware.txt](LICENSE-hardware.txt) |
-| Code (CPLD sources, tools, test programs) | MIT | [LICENSE](LICENSE) |
+| Hardware design files: schematic, PCB, and the CPLD logic (its sources and fuse maps) | CERN Open Hardware Licence v2, Permissive (CERN-OHL-P-2.0) | [LICENSE-hardware.txt](LICENSE-hardware.txt) |
+| Software: tools and test programs | MIT | [LICENSE](LICENSE) |
 | Documentation (`docs/`, this README) | Creative Commons Attribution 4.0 (CC BY 4.0) | [LICENSE-docs.txt](LICENSE-docs.txt) |
