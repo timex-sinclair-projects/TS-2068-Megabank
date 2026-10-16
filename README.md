@@ -35,3 +35,11 @@ OUT 252,2: OUT 253,2: PRINT IN 252, IN 253
 
 The border should not change, and both values should be 255 with no keys
 pressed. If not, the registers move to another port pair.
+
+## Licences
+
+| What | Licence | File |
+|---|---|---|
+| Hardware design files (schematic, PCB, CPLD logic as a design) | CERN Open Hardware Licence v2, Permissive (CERN-OHL-P-2.0) | [LICENSE-hardware.txt](LICENSE-hardware.txt) |
+| Code (CPLD sources, tools, test programs) | MIT | [LICENSE](LICENSE) |
+| Documentation (`docs/`, this README) | Creative Commons Attribution 4.0 (CC BY 4.0) | [LICENSE-docs.txt](LICENSE-docs.txt) |
