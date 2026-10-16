@@ -233,8 +233,29 @@ way the v3 card is, and reuses its tools from the
 [tspico-hardware](https://github.com/factus10/tspico-hardware) repository:
 `scripts/parts.py` (MPN and LCSC number for every part), `scripts/jlc_price.py`
 (prices and stock against JLCPCB's catalog) and `scripts/gen_fab.py` (the
-upload files). The aim is no hand soldering. Today one part, the RP2350's L1,
-still needs it, as on v3.
+upload files). The aim is no hand soldering. One part, the RP2350's L1, may
+still need it if JLCPCB cannot source it ([Parts](#parts)).
+
+**Design flow (decided): v3's script pipeline**, in tspico-hardware's
+`hardware/scripts/`, adapted (it hardcodes the name `tspico-v3`, the board
+size, the placement table, the plane nets and the pre-routes):
+
+- **Schematic** from Python with `schlib.py`: every pin gets a net label, no
+  wires; one `gen_<sheet>.py` per sheet, flat hierarchy with global labels;
+  `parts.py` stamps MPN and LCSC fields. The root sheet is written by hand
+  first. KiCad 10.
+- **Board** rebuilt from scratch each time: `gen_board.py` (outline, the
+  JLC04161H-7628 4-layer stackup, holes, fiducials), then `gen_layout.py`
+  (netlist via `kicad-cli sch export netlist`, footprints and a placement
+  table in code, GND and +3V3 planes on the inner layers).
+- **Routing**: `flow.py --jar freerouting-2.4.1.jar` runs placement,
+  `preroute.py` (locked hand routes: the RP2350B's regulator, crystal and QFN
+  fanout), `autoroute.py` (plane fanout vias, DSN export, Freerouting, SES
+  import) and `finish.py` (repairs, DRC), retrying from placement up to three
+  times; then `silk.py`. `check.sh` runs ERC and DRC; `gen_fab.py` writes the
+  JLCPCB files. Rules: 0.6/0.3 mm vias, 0.127 mm clearance, no tracks on the
+  plane layers. Copying v3's RP2350B placement and orientation lets its
+  pre-routes carry over.
 
 **3.3 V inside, 5 V bus (decided).** A controller (RP2350B) and 3.3 V SRAM sit
 behind 74LVC buffers. LVC inputs accept the 2068's 5 V, and a 3.3 V high is a
@@ -297,7 +318,7 @@ Candidates, with JLCPCB stock on 2026-10-16. Availability is open question 6.
 | Memory | 2 × CY62167EV30LL-45ZXIT (16 Mbit, 2.2–3.6 V, 45 ns, TSOP-I 48), used as 2M×8 | C511152 | 4 MB in two chips. **×8 confirmed (decided):** BYTE tied to ground makes it 2M×8, pin 45 (I/O15/A20) becomes A20, and BHE, BLE and I/O8–I/O14 are unused. Preferred over the DV30 for its standby current (below). 42 in stock: thin. |
 | Memory (alternate) | 2 × CY62167DV30LL-55ZXIT (same package drawing 51-85183 and pinout) | C2956479 | 168 in stock. The same footprint, with one difference: the DV30 marks BHE and BLE "do not use, leave floating", while the EV30 needs them tied to a logic level for its standby figures. Route each to ground through an unfitted 0 Ω pad: fitted for the EV30, left open for the DV30. Its standby is worse: 22 µA maximum per chip, with every input within 0.2 V of a rail. |
 | Memory (fallback) | 4 × IS62WV51216BLL-55TLI (512K×16, 3.3 V, TSOP-II-44) | C11315 | 3,623 in stock. Used as ×8: D0–7 tied to D8–15, /LB from A0 and /UB from A0 through a 74LVC1G04; A1–A12 and the page bits form the word address. A different footprint: choose before layout. **No CS2 in TSOP-II (confirmed):** its only chip select is CS1 (pin 6); CS2 exists only on the 48-ball mini-BGA, and JLCPCB's only BGA in stock is the 1.8 V IS62WV51216ALL. So power-fail protection goes through /LB and /UB instead: both come from gates on the SRAM rail whose other input is a "power not good" line (pulled up to the SRAM rail, pulled low by an N-MOSFET from the supervisor while 3.3 V is good), and a chip with both high is deselected. Four chip selects: 44 of the RP2350B's 48 pins. **Much worse standby:** 4 µA typical but 25 µA maximum per chip (industrial), and 20 µA maximum in data retention (down to 1.2 V), with every input within 0.2 V of a rail. Four chips could draw about 100 µA: about three months on a CR2032, nine on a CR2450. Order of preference: EV30, DV30, then this. |
-| Controller | RP2350B (QFN-80), with v3's core circuit: QSPI flash, crystal, core regulator | C42415655 | 4,873 in stock. Copy v3's RP2350B schematic sheet. L1, the core regulator's inductor (Abracon AOTA-B201610S3R3-101-T, C42411119), had 4 in stock: fit it by hand, as on v3, unless restocked. |
+| Controller | RP2350B (QFN-80), with v3's core circuit: QSPI flash, crystal, core regulator | C42415655 | 4,873 in stock. Copy v3's RP2350B schematic sheet. L1, the core regulator's inductor (Abracon AOTA-B201610S3R3-101-T, C42411119), had 4 in stock on 2026-10-16. **Keep it (decided):** no other part is approved for the RP235x, which is sensitive to the inductor's orientation (dot on pad 2, DVDD, as on v3). Get it placed by JLCPCB through its parts pre-order (from LCSC's stock, about 55) or Global Sourcing (DigiKey about 26,000, Mouser about 14,000). Failing that, order from DigiKey, mark L1 DNP, and fit it by hand. Generic 3.3 µH 0806 inductors are plentiful but unapproved and unmarked. |
 | Buffers | 4 × 74LVC245APW: A0–A7, A8–A15 and the control lines one way; D0–D7 both ways | C6082 | The same part as v3. Their power-off protection (Ioff) means that with the 2068 off they neither drive nor load the SRAM side. |
 | /BE driver | 74LVC1G06 (inverting, open-drain) | C7828 | Wire-ORs with v3's 74LVC06. The RP2350's reset state (input, pull-down) leaves /BE released. |
 | Chip enables | The CY62167's two: /CE1 (active low) and CE2 (active high) | | CE2 low deselects the chip whatever /CE1 does, including in data retention. **Both chips' CE2 come from the supervisor**, with a pull-down to ground, so they are high only while 3.3 V is good. **Each chip's /CE1 comes straight from the controller**, qualified by /MREQ, with a pull-down so it sits at a logic level on battery. No decoder, and no logic on the SRAM rail. |
@@ -370,9 +391,15 @@ and leaves /BE alone, so it never interferes with the 2068's DRAM refresh.
 
 A standard card for the expansion bus card (TS2068_Extender): three slots and a
 pass-through, of which the TS-Pico and PicoVideo normally take two. The board
-needs no pass-through of its own. How it connects to the slot (gold fingers, or
-a connector) and how its firmware is loaded (USB-C, or SWD pads) are open
-questions 6 and 11.
+needs no pass-through of its own. **Gold fingers on the PCB edge (decided)**, using v3's footprint
+`TS2068_EdgeConnector_2x32` (generated by `gen_board.py`, measured from the
+v2.2 Gerbers): 32 positions at 2.54 mm, 31 fingers a side, the key slot at
+position 6, an 83.66 × 8.25 mm tongue with 1 mm corner chamfers; pinout from
+the TS2068 Technical Manual (table 2.4.1-1). Order with hard gold if offered
+(else ENIG), a 30° bevel, and no copper within 0.3 mm of the slot. v3's
+assumption that side A is the top is still unverified: check it before
+ordering. The body's size is set at layout; how the firmware is loaded
+(USB-C, or SWD pads) is open question 11.
 
 ## Sharing the bus
 
@@ -767,12 +794,12 @@ reference for what it changes.
      IS62WV51216 (3,623 in stock), a different footprint, before layout. The
      earlier candidates were not at JLCPCB on that date: AS6C4008 (5 left),
      AS6C8008, CY62177G30, IS62WV20488, and Everspin MRAM.
-   - **L1**, the RP2350's core inductor, had 4 in stock: hand-fit, as on v3,
-     unless restocked.
+   - **L1:** JLCPCB pre-order or Global Sourcing; else DigiKey and hand
+     fitting ([Parts](#parts)).
    - **The RP2350B's stepping.** Use a stepping without the E9 pad erratum
      (a pull-down that latches), or don't rely on internal pull-downs.
-   - **The slot connection:** gold fingers (no part; JLCPCB charges for the
-     gold and the bevel) or a connector, which may be through-hole.
+   - **The edge fingers' sides:** confirm that side A is the top, as v3
+     assumes.
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
