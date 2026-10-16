@@ -26,15 +26,17 @@ It gives the 2068:
 
 ## The first test
 
-Before anything else: does a bare 2068 answer the board's ports, FCh and
-FDh? With nothing plugged in:
+Does a 2068 answer the board's ports, FCh and FDh? With nothing plugged in:
 
 ```
 OUT 252,2: OUT 253,2: PRINT IN 252, IN 253
 ```
 
-The border should not change, and both values should be 255 with no keys
-pressed. If not, the registers move to another port pair.
+The border should not change, and nothing should answer either port.
+
+**Result (2026-10-16), with the TS-Pico fitted:** the border did not change,
+and both ports drift between 127 and 255 from one read to the next whatever
+keys are held: a floating bus, with nothing answering. FCh and FDh stand.
 
 ## Licences
 

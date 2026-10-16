@@ -168,7 +168,7 @@ anyway **(decided)**.
 | 10h | `WPROT` | R/W | 00h | Bit *n* set: writes to chunk *n* are dropped while the board owns it. |
 | 11h | `STATUS` | R | – | Bit 0: write-protect switch on. Bit 1: battery low. Other bits 0. |
 | 12h | `ID` | R | – | A5h, the signature. |
-| 13h | `IDCOMP` | R | – | 5Ah, its complement (an absent board reads FFh twice). |
+| 13h | `IDCOMP` | R | – | 5Ah, its complement. With no board the bus floats: reads give 7Fh or FFh, never this pair. |
 | 14h | `BASE` | R | – | The first bank number: 1, 65, 129 or 193. |
 | 15h | `SIZE` | R | – | Banks fitted: 8, 16, 32 or 64 (a setting in the controller's flash, for boards built with fewer chips). |
 | 16h | `VERSION` | R | – | Board/logic version, starting at 1. |
@@ -180,7 +180,8 @@ anyway **(decided)**.
   then the value written to FCh.
 - Unused register numbers read FFh and ignore writes.
 - **Detecting the board:** `OUT (FDh),12h`, `IN A,(FCh)` gives A5h, then
-  `OUT (FDh),13h`, `IN A,(FCh)` gives 5Ah. Anything else: no board.
+  `OUT (FDh),13h`, `IN A,(FCh)` gives 5Ah. Anything else: no board. Never
+  take a single FFh as "no board": the 2068's bus floats, and D7 often reads 0.
 
 ## Programming it
 
@@ -707,15 +708,19 @@ line to fix.
 
 ## Testing
 
-**Before any hardware** (David can do the first today, on a bare 2068):
+**Before any hardware:**
 
 1. **Does the 2068 itself answer FCh or FDh?** The Spectrum's ULA answers
    any even port. If the 2068's SCLD decodes FEh partially, `OUT 252,n` would
    change the border and `IN 252` would read the keyboard, colliding with the
    board. In BASIC: `OUT 252,2` (border red?), `OUT 253,2`, and
-   `PRINT IN 252, IN 253` with no keys pressed (FFh means nobody answered). Timex
-   assigned these ports, so the SCLD probably ignores them, but it decides the
-   design, so check it first (open question 1).
+   `PRINT IN 252, IN 253` with no keys pressed (FFh means nobody answered).
+   **Done (2026-10-16), on David's 2068 with the TS-Pico fitted:** `OUT 252,2`
+   and `OUT 253,2` left the border alone; `IN 252` and `IN 253` each drift
+   between 127 and 255 from one read to the next, whatever keys are held,
+   while `IN 254` reads the keyboard (30 with ENTER still down). So nothing
+   answers FCh or FDh: the reads are a floating bus, D7 keeping whatever
+   charge is left on it. **FCh/FDh stand (decided).**
 2. **An emulator model.** Add the board to our ZEsarUX fork (memory reads and
    writes through the owner table, ports FCh/FDh). The ROM and firmware can
    then be developed and tested with no hardware, through the existing
@@ -749,7 +754,7 @@ line to fix.
 Each phase is its own branch and PR, and each PR updates the programmer's
 reference for what it changes.
 
-1. **Port test** on a bare 2068 (testing step 1). Decides whether FCh/FDh
+1. **Port test** on a 2068 (testing step 1). **Done (2026-10-16):** FCh/FDh
    stand.
 2. **Emulator model** in the ZEsarUX fork.
 3. **v3 firmware: bus sharing** (core 1). Small, and testable in the emulator
@@ -767,8 +772,10 @@ reference for what it changes.
 
 ## Open questions
 
-1. **Do ports FCh/FDh collide with the 2068 itself?** Testing step 1, on a
-   bare 2068. If the SCLD answers them, the registers move to another pair.
+1. **Do ports FCh/FDh collide with the 2068 itself?** **Answered
+   (2026-10-16): no** ([Testing](#testing), step 1). A repeat with nothing on
+   the expansion bus would remove the last doubt; the TS-Pico answers only
+   0Eh/0Fh.
 2. **/BE timing** through the expansion bus, in every slot, with the v3 card
    and PicoVideo fitted. Measured on the prototype. The v3 card's PIO path
    already wins this race on a 2068; the board's must too. Also measured: how
