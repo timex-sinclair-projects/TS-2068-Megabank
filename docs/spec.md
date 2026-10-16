@@ -303,10 +303,12 @@ Candidates, with JLCPCB stock on 2026-10-16. Availability is open question 6.
 | Chip enables | The CY62167's two: /CE1 (active low) and CE2 (active high) | | CE2 low deselects the chip whatever /CE1 does, including in data retention. **Both chips' CE2 come from the supervisor**, with a pull-down to ground, so they are high only while 3.3 V is good. **Each chip's /CE1 comes straight from the controller**, qualified by /MREQ, with a pull-down so it sits at a logic level on battery. No decoder, and no logic on the SRAM rail. |
 | /WE gate | SN74LVC1G32DBVR (OR, SOT-23-5, TI), on 3.3 V | C10096 | 139,210 in stock on 2026-10-16. SRAM /WE = buffered /WR OR the controller's write inhibit, which it sets per chunk from `WPROT` and the switch. The write-inhibit line has a **pull-up**, so writes are blocked until the controller's firmware runs: Z80 writes during its boot cannot reach the RAM disk. |
 | Power mux | LM66200 (ideal-diode ORing, 1.6–5.5 V, 1.32 µA) | C3235556 | Feeds the SRAM rail from 3.3 V or the battery. **Not the TPS2115A:** it draws about 55 µA from the battery, which would empty a coin cell in months. **Not plain diodes:** with 3.3 V on, the SRAM rail must stay close to 3.3 V, or the buffers and the controller push current into the SRAM's input clamps. |
-| Supervisor | TPS3839G33 on 3.3 V (threshold about 3.08 V) | C485802 | Drives both chips' CE2 directly: high while 3.3 V is good, low below the threshold, and the pull-down holds them low with 3.3 V gone. So no writes happen while power rises or falls, well above the SRAM's 2.2 V minimum. |
+| Supervisor | TPS3839G33 on 3.3 V (threshold about 3.08 V) | C485802 | Drives both chips' CE2 directly: high while 3.3 V is good, low below the threshold, and the pull-down holds them low with 3.3 V gone. So no writes happen while power rises or falls, well above the SRAM's 2.2 V minimum. Push-pull output, so CE2 needs no pull-up; its output is undefined below 0.6 V, which is what the pull-down covers. Its 200 ms delay keeps the SRAM deselected for 200 ms after power-on: harmless, since nothing maps a bank until software writes the registers. |
 | Battery | CR2032 in an SMD holder (a CR2450 clip for longer life) | C22363833, C7498149 | Two CY62167EV30s in standby (1.5 µA typical, 3.0 µA maximum at 25 °C and 3.5 µA at 40 °C, each) plus the mux (1.3 µA): about 8.5 µA worst case at room temperature, so about three years on a CR2032 and eight on a CR2450. At 85 °C the chips' maximum is 12 µA each. Data is kept down to 1.5 V. Measure the real board. |
 | Battery monitor | The RP2350B's ADC, through a MOSFET it switches on only to measure | | So the battery never feeds the unpowered RP2350's pins. `STATUS` bit 1 below about 2.5 V. |
 | Switch | Write-protect, SMD slide | | |
+| Pull resistors | 6 × 10 k, 0603 (0603WAF1002T5E) | C25804 | JLCPCB basic part, as on v3: no loading fee. **To ground:** CE2 (one, for both chips), each chip's /CE1 (two), the /BE request into the 74LVC1G06 (one, so boot does not rely on the RP2350's internal pull-down and its E9 erratum). **To 3.3 V:** write inhibit (one), the data buffer's /OE (one). 10 k on CE2, not 100 k: CE2 must stay under 0.2 V on battery, and two chips' input leakage (up to about 1 µA each) would put 0.2 V across 100 k; with 3.3 V on, the supervisor still gives at least 2.9 V into it (VDD − 0.4 V at 0.5 mA). The /CE1s are pulled *down*: a pull-up to the SRAM rail would feed the unpowered RP2350B. |
+| BHE/BLE links | 2 × 0 Ω, 0603 (0603WAF0000T5E) | C21189 | JLCPCB basic. BHE and BLE to ground: fitted for the EV30, do-not-place for a DV30 build. |
 
 **Standby with the controller off.** CE2 is held low by its pull-down, so the
 chips are deselected. The EV30 datasheet allows the other inputs (address, data,
@@ -738,7 +740,8 @@ reference for what it changes.
      (a pull-down that latches), or don't rely on internal pull-downs.
    - **The slot connection:** gold fingers (no part; JLCPCB charges for the
      gold and the bevel) or a connector, which may be through-hole.
-   - **The pull resistors:** pick values and parts, with LCSC numbers.
+   - **The battery monitor's switch:** draw it, then pick its MOSFET and
+     resistors.
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
@@ -756,6 +759,10 @@ reference for what it changes.
     ([Parts](#parts)). Still to check: that no path lets the battery feed the
     RP2350B or the buffers, and the real standby current on the prototype
     (hardware test 3), with the DV30 too if it is fitted.
+13. **Where the bus's /BE pull-up is.** The board's /BE driver is open-drain
+    and the board adds no pull-up, relying on the one already on the bus.
+    Confirm where that is (the 2068, or the v3 card) and that it is strong
+    enough for /BE to rise between cycles with the board fitted.
 
 ## Sources
 
