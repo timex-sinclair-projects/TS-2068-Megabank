@@ -724,7 +724,7 @@ line to fix.
 2. **An emulator model.** Add the board to our ZEsarUX fork (memory reads and
    writes through the owner table, ports FCh/FDh). The ROM and firmware can
    then be developed and tested with no hardware, through the existing
-   `tools/emu` bridge. **Built (2026-10-16):**
+   `tools/emu` bridge. **Done (2026-10-16), merged:**
    [zesarux-tspico#2](https://github.com/timex-sinclair-projects/zesarux-tspico/pull/2),
    documented in its `MEGABANK.md`. Off unless `MEGABANK_FILE=path` (the RAM
    kept in that file: the battery) or `MEGABANK=1` is set; `MEGABANK_BASE`,
@@ -763,8 +763,9 @@ reference for what it changes.
 
 1. **Port test** on a 2068 (testing step 1). **Done (2026-10-16):** FCh/FDh
    stand.
-2. **Emulator model** in the ZEsarUX fork. **In review (2026-10-16):**
-   [zesarux-tspico#2](https://github.com/timex-sinclair-projects/zesarux-tspico/pull/2).
+2. **Emulator model** in the ZEsarUX fork. **Done (2026-10-16):**
+   [zesarux-tspico#2](https://github.com/timex-sinclair-projects/zesarux-tspico/pull/2),
+   merged into `tspico-device`; its test passes on macOS, Linux and Windows.
 3. **v3 firmware: bus sharing** (core 1). Small, and testable in the emulator
    and on a v3 card with no board (nothing changes until something writes
    FDh/FCh).
