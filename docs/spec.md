@@ -10,7 +10,8 @@ two things it never had:
   with two `OUT`s and uses it at full memory speed: fonts, icons, window
   buffers, code overlays, a second screen's worth of work space.
 - **A RAM disk.** `SAVE "r:name"`, `LOAD "r:name"`, `CAT "r:"` and the rest,
-  as fast as the Z80 can copy, kept through power-off by a battery.
+  as fast as the Z80 can copy, kept through power-off by a battery. Later,
+  `OPEN #` streams on its files: random-access records from BASIC.
 
 It began with David's question (2026-10-16) whether the TS-Pico could emulate
 the LarKen 256K RAMdisk, and with a 2068 GUI author asking for a RAM disk.
@@ -37,6 +38,8 @@ those still to be checked on hardware are listed under [Open questions](#open-qu
 - [Sharing the bus](#sharing-the-bus): the v3 card, PicoVideo, BUSISO
 - [ROM](#rom): what ROM 2.4 adds
 - [The RAM disk](#the-ram-disk): `r:`, the mover, the on-board format
+- [Channels](#channels-phase-9): `OPEN #n,"r:name"`, streams and records
+  on the RAM disk
 - [Firmware](#firmware): the v3 card's part
 - [PicoVideo](#picovideo)
 - [Testing](#testing)
@@ -654,6 +657,248 @@ a `tpi:ram alloc` command that reserves pages below the RAM disk and records
 them in the superblock. Its exact form is for the GUI author to shape (open
 question 8).
 
+## Channels (phase 9)
+
+`OPEN #n,"r:name"[,"mode"[,reclen]]` opens a RAM disk file as a stream,
+the way `OPEN #n,"f:name"` opens a file on the SD card: then `PRINT #n`,
+`INPUT #n`, `INKEY$ #n`, `LIST #n` and `CLOSE #n`. The RAM disk becomes
+random-access data storage for BASIC: record files read and written in
+place, kept through power-off by the battery. **Proposed, not yet decided.**
+
+The model is the TS-Pico's `f:` channel, which works today. Its references,
+in tspico-firmware-build: `docs/reference/flows/channels.md` (the flow end to
+end), `docs/reference/rom/exrom-fdd.md` ("The channel driver"),
+`docs/reference/rom/home.md` (the three hooks and the HOME stubs at
+1488h–14C5h), `docs/reference/firmware/channels.md` (modes, records, TAB).
+
+### What `f:` already settled
+
+These hold for any channel on the 2068, and `r:` keeps every one:
+
+- **The record lives in CHANS.** MAKE-ROOM's POINTERS moves CURCHL, so a
+  record above the workspace breaks `INPUT #`; a record in the program loses
+  its offset when CHANS grows.
+- **Both bytes of the stream's offset stay below 80h.** SELECT (HOME 1230h)
+  takes a STRMS entry whose two bytes OR to 80h or more as a banked channel
+  and looks it up through SYSCON (1265h). The `f:` OPEN pads each record to
+  keep clear of that.
+- **Allocations are multiples of 256 bytes**, so closing one moves other
+  streams' offsets by their high byte only, and the pads stay right.
+- **Records hold fixed HOME addresses** (14A0h, 14A9h), never module
+  addresses, so nothing in a record goes stale when the module is rebuilt.
+- **Every entry from HOME runs under `DI`** (the bank switch writes FFh then
+  F4h; an interrupt between them runs `RST 38h` over the empty DOCK), and
+  **inside GUARDED**, so a report raised inside the module restores the bank
+  stack through H_TRAP (HOME 14B2h).
+- **CURCHL and IY are kept.** A channel routine runs inside someone else's
+  `PRINT #`; anything it prints would move the current channel to the screen.
+- **CLOSE # takes the record out** and fixes up the others: streams above it
+  move down, CURCHL goes to S if it pointed into the record. Stock CLOSE #
+  crashes on an unknown letter (its table at 1407h has no terminator), so
+  the hook must catch every letter the module creates.
+
+### Question 1: CHANS records or Timex's banked channels
+
+The 2068 ROM has Timex's path for channels whose code lives in an expansion
+bank: SELECT's SYSCON lookup, the bank number kept in CRCBN (5CBFh), the
+routines called through `CALL_BANK`, and CLCHAN's banked close (13D8h). The
+Megabank is made of expansion banks, so it is tempting. **Recommended:
+ordinary CHANS records, letter `R`, through the `f:` hooks.** The banked path
+loses on every count:
+
+- **It needs phase 8 first.** `CALL_BANK` does nothing useful until the bank
+  API works on the board and `MAXBNK` is nonzero.
+- **It is slow per character.** Every `RST 10h` would go through `CALL_BANK`
+  (parameter frame, `SAVE_STATUS`, `BANK_ENABLE`, `RESTORE_STATUS`), against
+  the `f:` stub's one thunk.
+- **The code has to live in a bank.** The board is RAM: the driver would be
+  copied there at boot from the EXROM, into pages the RAM disk and programs
+  also use, and would run from memory any program can overwrite.
+- **There is no way in.** The banked OPEN path at HOME 1488h was never
+  reachable, and the TS-Pico ROM has rewritten those 55 bytes as its own
+  stubs. A new OPEN path would be needed anyway, and the `f:` one exists.
+- **SYSCON holds at most 10 entries** (open question 9), and Timex's banked
+  path is untested code on a ROM where every other part of the bank API has
+  turned out broken.
+
+So `r:` needs **no new HOME bytes**: an `R` record holds the same 14A0h and
+14A9h as an `F` record, and the module's `G_OUT`/`G_IN` choose `CH_OUT` or
+the `r:` routines by the record's letter (one compare per character). The
+changes to the existing driver:
+
+- `CH_OPEN_HOOK` recognises `r:` beside `f:` and `d:`.
+- `CH_CLOSE_HOOK` closes `R` records as well as `F` ones; the fix-up of other
+  streams moves them by the closed record's own allocation (512 bytes for
+  `F`, 256 for `R`) instead of a constant.
+- `G_BEEP` skips the key click for `R` records too, so reading is silent.
+
+The banked-channel route stays unused; nothing here depends on open
+question 9.
+
+### Question 2: where the bytes go
+
+Two ways to carry a `PRINT #` byte to the board:
+
+- **Through the firmware**, as `f:` does: the ROM buffers 64 bytes, sends
+  `tpi:chwr` with the bytes as hex over port 0Eh, and the firmware, which
+  can't reach the board, has the mover copy them back from the TS-Pico into
+  the page (op 5). Every byte crosses the bus twice, and reading back is the
+  `tpi:chrd` data phase at about 75 µs a byte.
+- **Straight to the board** from the ROM, through the mover's window: map
+  the file's page into a window chunk, store or fetch the byte, restore the
+  chunk.
+
+**Recommended: straight to the board, with the firmware involved only at
+OPEN, CLOSE and when a file must grow.** The firmware stays the owner of
+the file system (names, allocation, the directory); the ROM owns only an
+open file's bytes, inside an extent the firmware gave it.
+
+- **Speed.** The window costs about a dozen port accesses (save `OWNw` and
+  `SUBw`, map, restore) and the position arithmetic: an estimated 400–500
+  T-states per character, about 0.15 ms, on top of the stub, thunk and
+  GUARDED cost every `f:` character already pays. No exchange with the
+  TS-Pico, no SD card, nothing to wait for. (Estimates; measure in the
+  emulator.)
+- **No buffers.** Each `PRINT #` byte is on the board when `RST 10h`
+  returns, and `INPUT #` reads one byte at a time with no read-ahead. So the
+  record is small (256 bytes, mostly pad, against `f:`'s 512), a `u` stream
+  needs no rule to stop a read running past a line, and nothing is lost in a
+  buffer at NEW or power-off.
+- **The window rule** is the mover's: a chunk from 4–7 holding neither the
+  stack nor the `R` record (CHANS can reach chunk 4 with many streams open),
+  saved and restored, under the `DI` every entry already has. A program's
+  own mapped pages survive every `PRINT #`.
+
+**OPEN, CLOSE and growth go to the firmware** through the channel driver's
+`CH_SEND`, with the mover running inside the exchange (the firmware may
+read or write the directory), ending with op 0's report code:
+
+1. **OPEN** sends the stream, mode, record length, name and `STATUS` (so the
+   firmware refuses writing with the write-protect switch on). The firmware
+   finds or creates the file and gives it an **extent**: its start on the
+   board and the bytes allocated. A file opened for writing gets the free
+   run after it as room to grow (trimmed at CLOSE). It writes the stream's
+   **slot** on the board (below), and the ROM copies the slot into the
+   record.
+2. **Growth:** a write past the extent asks for more. The firmware extends
+   the file in place, or moves it (op 6) and gives a new extent; no room is
+   the RAM disk's full report, with the file intact up to there.
+3. **CLOSE** writes the final length and position to the slot, pads an open
+   record, and tells the firmware, which writes the length into the
+   directory and trims the extent.
+
+### Slots, power-off, NEW and reset
+
+**The open-file slots**: one per stream 0–15, 32 bytes each, in the RAM
+disk's top page after the superblock and outside its checksum. A slot names
+the directory entry, the extent, the length, the position, the mode and the
+record length. The firmware writes it at OPEN; while the stream is open the
+ROM keeps the working copy in the record and **writes the length and
+position back to the slot at every CR, whenever the position crosses a
+256-byte boundary, and at CLOSE** (one window mapping each time). The ROM
+reads `STATUS` at each write-back: the switch turned on mid-stream is
+reported then, not silently dropped writes.
+
+**Every `r:` command carries an open-stream mask**: a bit for each stream
+0–15 whose STRMS entry points at an `R` record. The firmware closes every
+slot whose bit is clear: its length goes into the directory and the slot is
+freed. That covers, with nothing to clean up by hand:
+
+- **Power-off and reset:** the boot report (open question 3) carries a mask
+  of 0, so every slot is closed. A file being written keeps everything up to
+  its last CR or 256-byte boundary; the bytes after it are on the board but
+  outside the length.
+- **NEW,** which empties CHANS and STRMS without the ROM noticing: the next
+  `r:` command's mask closes the slots. (`f:` handles NEW by replacing a
+  stale entry at the next OPEN of the same stream; the mask is stricter.)
+- **A program that clears a STRMS entry by `POKE`.**
+
+The firmware reads the slots with the superblock at the start of each `r:`
+command, so `CAT "r:"` shows an open file's current length.
+
+**While a file is open** the firmware never moves it except to grow it for
+its own stream, and refuses (Report F, as `f:` documents for a second OPEN
+but never enforced): `ERASE` of it, `SAVE` over it, `MOVE` to it, a second
+OPEN of it for writing, and `FORMAT "r:"` while any slot is open. Several
+streams may read one file. Compaction treats open files as fixed.
+
+### Question 3: modes, records, text
+
+**Modes,** as `f:`: `r` read (the file must exist, else F), `w` write
+(created or emptied), `a` append (created if missing, position at the end),
+`u` update (created if missing, position 0, read and write), each with an
+optional `b`. No mode is `r`. Output to an `r` stream is dropped (INPUT #'s
+prompt goes to the stream too); `INPUT #` on `w` or `a` is Q. End of file is
+NC NZ from the input routine, which WAIT-KEY turns into **8 End of file**.
+
+**Records,** as `f:`: `OPEN #4,"r:data","u",30` makes a record file (1–254;
+otherwise Q).
+
+- `PRINT #4;TAB n;…` and `INPUT #4;TAB n;…` go to record *n*: TAB arrives
+  as 23, lo, hi through the output routine, and the ROM computes the
+  position, (*n* − 1) × reclen, itself. On a stream file `TAB n` is byte *n*.
+- A CR ends the record and isn't stored; a short record is padded (spaces,
+  or 0 in binary); a record that would run over its length is Q on the PRINT
+  that made it, with nothing written; a record left open by `;` is padded at
+  CLOSE; a TAB past the end pads the gap.
+- Reading gives one record and a CR. `TAB 0` then a read gives the number of
+  records (or bytes); `TAB 0` with data is Q.
+
+Random access is where `r:` is far ahead of `f:`: each `f:` seek and record
+is a command to the TS-Pico and an SD card mount, each `r:` one a
+multiplication and a window.
+
+**Text and binary.** `f:` translates on the Pico because its files are read
+on a PC: keywords spelt out, LF line ends, UTF-8. An `r:` file stays on the
+2068, so the ROM keeps its bytes as the 2068 wrote them, with a small
+translation in text mode:
+
+- **Text (default), writing:** colour and position controls (16–21 with one
+  parameter, 22 with two) are dropped, the comma control (6) becomes spaces
+  to the next 16-column stop (the record keeps a column), other controls
+  except CR are dropped. Keywords stay single token bytes, so `LIST #4` then
+  `INPUT #4;LINE a$` gives the line as the 2068 shows it, and `"a|b"`
+  round-trips (unlike `f:`).
+- **Text, reading:** LF and CRLF become CR, so a text file MOVEd in from the
+  SD card reads line by line; other control bytes are dropped, so `INPUT #`
+  never acts on them as editing keys.
+- **Binary:** every byte as it is, except that 23 is always TAB (as `f:`).
+  `INKEY$ #` is the way to read raw bytes.
+
+Channel files are stored as `CODE` files with start 0, so `LOAD "r:name"
+CODE addr` works on them, and any `r:` file (a SAVEd program, a screen) can
+be opened `rb` to read its bytes. `MOVE "r:name" TO "tpi:name"` copies the
+bytes unchanged: whether it should translate text files to PC text, as an
+`f:` file would be, is open question 14.
+
+### Other streams on the RAM disk
+
+- **A listing:** `OPEN #5,"r:"` reads the RAM disk's names, one per
+  `INPUT #5`, then 8 End of file; `TAB 0` gives the count. As `d:`, it is
+  read-only. The firmware writes the names into a hidden scratch file and
+  opens it `r`, so the ROM reads it like any other file.
+- **Capturing the printer:** `OPEN #3,"r:listing","w"`, then `LLIST` or
+  `LPRINT`, then `CLOSE #3`. Needs checking that `CLOSE #3` puts P back, as
+  it should for `f:` (testing).
+- **Data that outlives a program:** a file written by one program and read
+  by the next after `NEW` or `LOAD`, without the SD card. This is what the
+  GUI author's settings and save games need (open question 8).
+
+### Coexisting with `f:`
+
+Both kinds of record sit in CHANS under the same hooks and the same rules,
+told apart by the letter. An `F` and an `R` stream can be open together; an
+OPEN of a stream already open to either is **O Invalid stream**, as today.
+`f:` commands never touch the board, and `r:` characters never talk to the
+TS-Pico, so neither slows the other; their OPEN and CLOSE exchanges share
+`CH_SEND`'s IDLE wait. The `f:` driver's own code doesn't change beyond the
+three points under Question 1.
+
+**ROM space.** The `r:` routines (open and close glue, the output and
+input routines with text mode, records and TAB, the slot write-back) are
+estimated at 600–900 bytes, in EXROM chunk 1's free space beside the
+mover (5,239 bytes free before phase 4).
+
 ## Firmware
 
 All on the v3 card; v2 is out of scope **(decided)**.
@@ -680,6 +925,8 @@ over a microsecond, so the table is current before the next memory read.
 - the mover's side of the protocol: sending operations, checking status;
 - the `CAT`/`ERASE`/`MOVE`/`FORMAT` handlers for `r:` names;
 - `tpi:ram` (info, backup, restore, alloc);
+- later (phase 9), the `r:` channels' OPEN, growth and CLOSE, the open-file
+  slots and the open-stream mask ([Channels](#channels-phase-9));
 - what the ROM reports at boot: board found, `BASE`, `SIZE`, `STATUS`.
   The firmware can't read the board itself, since it can't run bus cycles.
 
@@ -756,6 +1003,22 @@ line to fix.
    restore, a full disk, compaction.
 6. `tools/hwcheck.py` grows a RAM-board section.
 
+**Channels (phase 9),** in the emulator first, as `f:` was:
+
+1. `PRINT #`, `INPUT #`, `LIST #`, `INKEY$ #` in every mode; records with
+   `TAB` both ways; reading past the end; a file that must grow and move.
+2. A few thousand characters through a stream with a program's own page
+   mapped in each of chunks 4–7: the page must survive, the stream must not
+   crash.
+3. 32 errors in a row inside the channel (the `f:` bank-stack test).
+4. `f:` and `r:` streams open together; closing them in every order (the
+   offset fix-up with 256- and 512-byte allocations).
+5. NEW, a reset and power-off with a stream open: the file keeps everything
+   to its last CR, its slot is closed, `ERASE` then works.
+6. The write-protect switch turned on mid-stream.
+7. `OPEN #3,"r:…"` with `LLIST`, then `CLOSE #3`: P must come back.
+8. The cost per character, against the estimate.
+
 ## Phases
 
 Each phase is its own branch and PR, and each PR updates the programmer's
@@ -778,6 +1041,8 @@ reference for what it changes.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. David leans towards only what
    the board and RAM disk need, and is open to the whole API (open question 5).
+9. **ROM and firmware: `r:` channels** ([Channels](#channels-phase-9)).
+   Depends on 4 and 5 only, not on 8, so it can go before it.
 
 ## Open questions
 
@@ -837,6 +1102,14 @@ reference for what it changes.
     and the board adds no pull-up, relying on the one already on the bus.
     Confirm where that is (the 2068, or the v3 card) and that it is strong
     enough for /BE to rise between cycles with the board fitted.
+14. **Channels** ([Channels](#channels-phase-9)): agree the recommendations
+    (CHANS records with the `f:` hooks, direct access through the window,
+    the slots and the open-stream mask, text mode in the ROM). Still open:
+    whether `MOVE "r:…" TO "tpi:…"` translates a channel text file to PC
+    text (keywords spelt out, LF), as an `f:` file would be; whether
+    listings take a pattern, as `d:` does; and how the open-stream mask
+    travels in `r:` commands (decided with `docs/PROTOCOL.md`, with open
+    question 3).
 
 ## Sources
 
