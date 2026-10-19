@@ -105,6 +105,18 @@ def main():
     # carries on under the package, between the pad row and the DVDD spine, to pin 15, whose fan
     # via is on the plane already. 0.17 mm or more from every pad and from the spine.
     route("+3V3", [(66.3, 28.6), (66.3, 29.85), (65.95, 30.2), (63.8, 30.2), (63.8, 30.95)], 0.15)
+    # ---- top pad row, pins 42-48 (PA16-PA20, WINH, nWP): a staircase to the right -----------
+    # All seven head right to the SRAMs, past pin 41's corner via and C47. Left to the router
+    # they came out as a tangle of vias, and one or two were sealed in on most attempts. Each
+    # pin runs straight up to its own lane, then right; lanes 0.4 mm apart, the rightmost pin on
+    # the lowest lane, so nothing crosses. The lowest lane clears the corner via by 0.43 mm and
+    # C47 by 0.25 mm. The lanes end at x 73, clear of everything, for the router to carry on.
+    # (C27 moved out of the way, and BAT_ADC moved off pin 49, which this would box in against C21.)
+    for k, pin in enumerate(range(42, 49)):
+        pad = next(p for p in u20.Pads() if p.GetNumber() == str(pin))
+        x, y = pcbnew.ToMM(pad.GetPosition().x), pcbnew.ToMM(pad.GetPosition().y)
+        lane = round(19.0 - 0.4 * k, 2)
+        route(pad.GetNetname().split("/")[-1], [(x, y), (x, lane), (73.0, lane)], 0.15)
     # ---- U1's Z80-side pins (A0-A7): a via fan under its own body ---------------------------
     # U1's bottom pad row faces U2's top row across a 0.8 mm gap, so these pins can only leave
     # under U1, and all of them have to change layer (their fingers are bottom copper). Left to

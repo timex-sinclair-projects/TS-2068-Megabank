@@ -7,9 +7,10 @@ copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
 
 - **Schematic:** four sheets, generated. ERC: one warning, expected (below).
 - **Board:** outline, gold fingers and mounting holes are v3's. Routed by
-  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 1768 track
-  segments (1286 top, 482 bottom), 326 vias, all 0.6/0.3 mm, narrowest track
-  0.11 mm, nothing on the plane layers. Closed on the second attempt. Silkscreen:
+  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 1765 track
+  segments (1250 top, 515 bottom), 320 vias, all 0.6/0.3 mm, narrowest track
+  0.13 mm, nothing on the plane layers. Closed on the second attempt (the first
+  left three nets open). Silkscreen:
   81 of 82 designators placed; C39 is hidden, as on v3.
 - **Fab files:** `python3 scripts/gen_fab.py` writes the Gerbers, BOM and CPL
   to `fab/jlcpcb/` (ignored by git); `fab/NOTES.md` lists what to check on upload.
@@ -66,10 +67,11 @@ strobes, /BE, the ~CE1s and the page bits. Everything both need sits in 16-31:
 | 30-37 | PA13-PA20 | page bits, contiguous with the ~CE1s |
 | 38 | WINH | write inhibit, pulled up |
 | 39 | nWP | write-protect switch, low = protected |
-| 40 | BAT_ADC | ADC0 |
+| 40 | spare | pin 49, boxed in by the top-row fan and C21 |
 | 41 | BAT_EN | |
 | 42 | nBE_L | /BE read back through U4's spare channel |
-| 43-47 | spare | |
+| 43 | BAT_ADC | ADC3, pin 54, on the side facing the battery monitor |
+| 44-47 | spare | |
 
 ### Decisions taken here, beyond the spec
 
@@ -107,19 +109,42 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
   are nDOE and BE_REQ, and the first run left both sealed in on all three
   attempts. The 24/29 supply link now carries on under the package to pin 15,
   whose fan via is already on the +3V3 plane.
+  One pre-route added: a staircase fan for the top pad row's pins 42-48 (PA16-
+  PA20, WINH, nWP), straight up into lanes 0.4 mm apart and right to x 73. All
+  seven head for the SRAMs; left to the router they came out as a tangle of
+  vias, with one or two sealed in on most attempts. For room, C27 (pin 41's
+  100 nF) moved up from v3's (67.4, 17.4) to (67.4, 15.2), and BAT_ADC moved
+  from GPIO40 (pin 49, which the fan would box in against C21) to GPIO43.
 - **SRAM** U10 and U11 on the right, leads top and bottom; the /WE gate, the
   supervisor and the pulls in the strip between them and the crystal.
 - **Power:** diodes and LDO top left, LM66200 and the battery monitor in the
-  free strip above the RP2350B, the CR2032 bottom left. USB-C on the left edge
-  (v3's place). RUN and BOOTSEL on the top edge (v3's places). Write-protect
-  slide switch on the right edge.
+  free strip above the RP2350B, the CR2032 bottom left (tabs left and right).
+  USB-C on the left edge (v3's place). RUN and BOOTSEL on the top edge (v3's
+  places). Write-protect slide switch on the right edge, actuator tip flush
+  with it.
+
+### Footprints checked against the makers' drawings (2026-10-19)
+
+- **Battery holder, Q&J CR2032-BS-6-1 (C70377), drawing QJ.BS-6:** KiCad has
+  no footprint for it, and Keystone 3034's (used until now) was wrong: the 3034
+  has two + tabs at the sides and a - pad under the cell, while the BS-6 has a
+  + tab at one end and a - tab at the other. Now
+  `lib/megabank.pretty/BatteryHolder_QJ_CR2032-BS-6-1`, from the drawing's PCB
+  layout: two 4.2 x 3.0 mm pads, 26 mm apart inside and 32 mm outside; housing
+  16 x 28.5 mm (31.3 over the tabs), 5.5 mm tall; the 20 mm cell overhangs the
+  housing's sides, so the courtyard is 20.5 x 32.5 mm.
+- **Slide switch, SHOU HAN MSK12C02 (C431540):** KiCad's
+  `SW_SPDT_Shouhan_MSK12C02` matches the drawing, rotated 180 degrees (pins at
+  -y, actuator at +y): pins 1-2 3.0 mm apart and 2-3 1.5 mm, the 0.85 mm
+  locating holes 3 mm apart, the four 1.05 x 0.7 mm mounting pads. The actuator
+  stands 1.45 mm proud of the body; it faced the right edge but stopped 2.1 mm
+  short of it, so SW5 moved to x 127.1, which puts its tip at the edge (x 130).
 
 ## Next
 
-1. **Check footprints against drawings:** the battery holder (Q&J
-   CR2032-BS-6-1, C70377) uses Keystone 3034's footprint; the MSK12C02's
-   actuator should face the right edge; TSOP-I 48 against Infineon's 51-85183.
-   Then check side A of the fingers (spec, open question 6).
+1. **Check against drawings:** TSOP-I 48 against Infineon's 51-85183, then
+   side A of the fingers (spec, open question 6). The battery holder and the
+   slide switch are done (above).
 2. **The SRAM rail with a fresh cell:** the LM66200 passes whichever input is
    higher, and a new CR2032 reads up to about 3.3 V open circuit, against +3V3's
    3.25-3.35 V. At SRAM standby currents the cell may carry the rail some of the

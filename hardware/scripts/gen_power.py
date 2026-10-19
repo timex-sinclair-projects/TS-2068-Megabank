@@ -25,7 +25,7 @@ D_SMA = "Diode_SMD:D_SMA"
 SOT223 = "Package_TO_SOT_SMD:SOT-223-3_TabPin2"
 SOT23 = "Package_TO_SOT_SMD:SOT-23"
 SOT583 = "Package_TO_SOT_SMD:SOT-583-8"
-BAT_FP = "Battery:BatteryHolder_Keystone_3034_1x20mm"
+BAT_FP = "megabank:BatteryHolder_QJ_CR2032-BS-6-1"   # from Q&J's drawing; KiCad has no footprint for it
 
 OUT, IN, BI = "output", "input", "bidirectional"
 

@@ -1,5 +1,5 @@
 "Value","Reference","Footprint","MPN","LCSC","Qty"
-"CR2032","BT1","Battery:BatteryHolder_Keystone_3034_1x20mm","CR2032-BS-6-1","C70377","1"
+"CR2032","BT1","megabank:BatteryHolder_QJ_CR2032-BS-6-1","CR2032-BS-6-1","C70377","1"
 "100n","C1-C5,C10-C12,C21,C23-C31,C37,C47,C48,C52,C54,C55","Capacitor_SMD:C_0603_1608Metric","CC0603KRX7R9BB104","C14663","24"
 "4.7u","C20,C22,C39","Capacitor_SMD:C_0402_1005Metric","CL05A475MP5NRNC","C23733","3"
 "15p","C35,C36","Capacitor_SMD:C_0603_1608Metric","CL10C150JB8NNNC","C1644","2"

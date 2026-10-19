@@ -20,10 +20,11 @@ or GPIO16, so everything both programs need sits in GPIO16-31:
   GPIO30-37  PA13-PA20     page bits, contiguous after the ~CE1s           window 16
   GPIO38     WINH          write inhibit (R12 pull-up)                     window 16
   GPIO39     nWP           write-protect switch, low = protected (internal pull-up)
-  GPIO40     BAT_ADC       ADC0
+  GPIO40     spare         (pin 49: boxed in by the top-row fan and C21; preroute.py)
   GPIO41     BAT_EN
   GPIO42     nBE_L         /BE read back
-  GPIO43-47  spare
+  GPIO43     BAT_ADC       ADC3, on the side facing the battery monitor
+  GPIO44-47  spare
 """
 import os
 import sys
@@ -50,7 +51,7 @@ GPIO = {
     23: ("nRFSH_L", IN), 24: ("nM1_L", IN), 25: ("nRESET_L", IN),
     26: ("nDOE", OUT), 27: ("BE_REQ", OUT), 28: ("nCE1_0", OUT), 29: ("nCE1_1", OUT),
     **{30 + i: (f"PA{13 + i}", OUT) for i in range(8)},
-    38: ("WINH", OUT), 39: ("nWP", IN), 40: ("BAT_ADC", BI), 41: ("BAT_EN", OUT), 42: ("nBE_L", IN),
+    38: ("WINH", OUT), 39: ("nWP", IN), 41: ("BAT_EN", OUT), 42: ("nBE_L", IN), 43: ("BAT_ADC", BI),
 }
 SPARE = [g for g in range(48) if g not in GPIO]
 

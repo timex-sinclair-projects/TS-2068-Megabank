@@ -60,13 +60,15 @@ P["R2"] = (55.5, 42.7, 0)                                           # nDOE pull-
 # Rotated so GPIO0-7 (here the SD bus) sit at the bottom-left corner, the control GPIOs
 # along the bottom, QSPI/USB/regulator on the left, crystal on the right.
 P["U20"] = (62, 26, 90)
+# One change from v3: C27 (pin 41) moves up from (67.4, 17.4) to (67.4, 15.2), out of the
+# lanes of the top-row fan (preroute.py), which carries PA16-PA20, WINH and nWP to the SRAMs.
 P["C22"], P["C20"], P["L1"] = (55.25, 22.8, 90), (54.05, 22.8, 90), (52.25, 22.8, 270)
 P["C39"], P["R28"] = (55.1, 21.2, 180), (55.6, 19.2, 270)
 P["Y1"], P["R20"], P["C35"], P["C36"] = (75.5, 26.0, 0), (71.7, 25.2, 0), (74.4, 29.3, 270), (76.6, 22.7, 90)
 P["C23"], P["C24"] = (51.2, 26.4, 0), (51.2, 29.4, 0)
 P["C25"], P["C48"], P["C26"] = (57.6, 37.0, 270), (61.35, 37.0, 270), (66.0, 37.0, 270)
 P["C28"], P["C29"], P["C47"] = (69.4, 30.6, 0), (72.6, 33.0, 0), (70.6, 19.8, 0)
-P["C27"], P["C30"], P["C21"], P["C31"] = (67.4, 17.4, 90), (64.2, 14.0, 0), (62.3, 18.2, 90), (57.4, 16.4, 0)
+P["C27"], P["C30"], P["C21"], P["C31"] = (67.4, 15.2, 0), (64.2, 14.0, 0), (62.3, 18.2, 90), (57.4, 16.4, 0)
 P["U21"], P["C37"], P["R21"] = (44, 20, 0), (38, 20, 90), (38, 25, 0)
 P["R27"], P["R26"] = (47.6, 23.7, 0), (47.6, 26.3, 0)
 P["J1"] = (3.2, 21, 270)                      # USB-C on the left edge, as v3
@@ -85,12 +87,12 @@ P["R10"], P["R11"], P["R12"] = (90, 31, 0), (90, 33.5, 0), (90, 36, 0)
 # supervisor driving CE2, beside the SRAMs
 P["U31"], P["C52"], P["R50"] = (90, 14, 0), (90, 17.5, 0), (90, 20.5, 0)
 # write-protect switch on the right edge
-P["SW5"] = (125.0, 41.0, 90)
+P["SW5"] = (127.1, 41.0, 90)                # actuator tip at x 130.0, flush with the board edge (MSK12C02 drawing: 1.45 mm proud of the body)
 
 # ---- power: inputs and the LDO top left, battery bottom left ------------------------
 P["D1"], P["D2"] = (17, 4.5, 0), (17, 9.0, 0)
 P["U30"], P["C50"], P["C51"] = (29, 7.5, 0), (22.5, 13.0, 0), (34.5, 13.0, 0)
-P["BT1"] = (20, 37.5, 0)
+P["BT1"] = (20.1, 36.7, 90)                 # Q&J holder, tabs left and right: clear of the USB resistors and FID1
 # SRAM rail and the battery monitor, in the free strip above the RP2350B
 P["U32"], P["C53"], P["C54"] = (42, 5, 0), (45.5, 5, 90), (38.5, 5, 90)
 P["Q1"], P["Q2"] = (51, 5, 0), (56, 8.5, 0)

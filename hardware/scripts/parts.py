@@ -46,7 +46,7 @@ PARTS = {
     ("RUN", "SW_Push_1P1T_XKB_TS-1187A"): ("TS-1187A-B-A-B", "C318884", "basic, XKB"),
     ("BOOTSEL", "SW_Push_1P1T_XKB_TS-1187A"): ("TS-1187A-B-A-B", "C318884", "basic, XKB"),
     ("WP", "SW_SPDT_Shouhan_MSK12C02"): ("MSK12C02", "C431540", "extended, SHOU HAN slide switch"),
-    ("CR2032", "BatteryHolder_Keystone_3034_1x20mm"): ("CR2032-BS-6-1", "C70377", "extended, Q&J SMD holder; footprint is Keystone 3034's, to be checked against the Q&J drawing before layout"),
+    ("CR2032", "BatteryHolder_QJ_CR2032-BS-6-1"): ("CR2032-BS-6-1", "C70377", "extended, Q&J SMD holder; project footprint drawn from Q&J's drawing QJ.BS-6 (checked 2026-10-19)"),
 }
 
 
