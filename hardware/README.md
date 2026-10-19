@@ -1,14 +1,18 @@
 # Megabank KiCad project
 
-Status 2026-10-18: **schematic done, parts placed, not routed.** The board has the
-TS-Pico v3's form factor and is built with v3's script pipeline (tspico-hardware,
-`hardware/scripts/`), copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
+Status 2026-10-18: **routed, DRC clean at every severity** (no errors, no warnings,
+nothing unconnected), not yet ordered. The board has the TS-Pico v3's form factor
+and is built with v3's script pipeline (tspico-hardware, `hardware/scripts/`),
+copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
 
 - **Schematic:** four sheets, generated. ERC: one warning, expected (below).
-- **Board:** outline, gold fingers and mounting holes are v3's. Every part is
-  placed, no courtyard overlaps. v3's RP2350B pre-routes (regulator, crystal,
-  DVDD spine, QFN fan-out, U1's address via fan) run unchanged: 135 tracks, 34
-  vias, no DRC errors. The rest is unrouted: Freerouting's jar was not on hand.
+- **Board:** outline, gold fingers and mounting holes are v3's. Routed by
+  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 1768 track
+  segments (1286 top, 482 bottom), 326 vias, all 0.6/0.3 mm, narrowest track
+  0.11 mm, nothing on the plane layers. Closed on the second attempt. Silkscreen:
+  81 of 82 designators placed; C39 is hidden, as on v3.
+- **Fab files:** `python3 scripts/gen_fab.py` writes the Gerbers, BOM and CPL
+  to `fab/jlcpcb/` (ignored by git); `fab/NOTES.md` lists what to check on upload.
 - **Parts:** every fitted part has an LCSC number. About $25-27 a board in parts
   at 10 boards, plus about $42 in extended-part fees once; the two SRAMs are
   $19.46 of it.
@@ -97,7 +101,12 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
   A15-A8, control U4 (x 80) over /MREQ to /RFSH, /BE driver U5 by finger A29.
   Low address U1 above U2.
 - **RP2350B cluster** at v3's coordinates with v3's designators (U20 at
-  (62, 26), 90°), so `preroute.py` runs unchanged. Flash U21 to its left.
+  (62, 26), 90°), so v3's pre-routes carry over. Flash U21 to its left.
+  One pre-route changed: on v3, supply pin 29 dropped into the lanes of pads 27
+  and 28 to reach its via, because those GPIOs (26, 27) were spare. Here they
+  are nDOE and BE_REQ, and the first run left both sealed in on all three
+  attempts. The 24/29 supply link now carries on under the package to pin 15,
+  whose fan via is already on the +3V3 plane.
 - **SRAM** U10 and U11 on the right, leads top and bottom; the /WE gate, the
   supervisor and the pulls in the strip between them and the crystal.
 - **Power:** diodes and LDO top left, LM66200 and the battery monitor in the
@@ -107,24 +116,32 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
 
 ## Next
 
-1. **Route:** with Freerouting 2.4.1,
-   ```bash
-   cd hardware
-   PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-   $PY scripts/flow.py --jar <freerouting-2.4.1.jar>
-   ```
-   then `scripts/check.sh` and `python3 scripts/gen_fab.py`. Expect to adjust
-   placement: each SRAM takes 33 signals from three directions.
-2. **Check footprints against drawings:** the battery holder (Q&J
+1. **Check footprints against drawings:** the battery holder (Q&J
    CR2032-BS-6-1, C70377) uses Keystone 3034's footprint; the MSK12C02's
    actuator should face the right edge; TSOP-I 48 against Infineon's 51-85183.
-3. **The SRAM rail with a fresh cell:** the LM66200 passes whichever input is
+   Then check side A of the fingers (spec, open question 6).
+2. **The SRAM rail with a fresh cell:** the LM66200 passes whichever input is
    higher, and a new CR2032 reads up to about 3.3 V open circuit, against +3V3's
    3.25-3.35 V. At SRAM standby currents the cell may carry the rail some of the
    time with the 2068 on. Harmless to the data; it costs battery life. Measure on
    the prototype (spec, hardware test 3); a Schottky in series with the cell
    would settle it if needed.
-4. **Stock:** 42 CY62167EV30 at JLCPCB on 2026-10-18, enough for 20 boards.
+3. **Stock:** 42 CY62167EV30 at JLCPCB on 2026-10-18, enough for 20 boards.
+
+## Routing
+
+```bash
+cd hardware
+PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
+$PY scripts/flow.py --jar <freerouting-2.4.1.jar>    # needs Homebrew's openjdk (autoroute.py's JAVA)
+scripts/check.sh                                      # ERC (one expected warning) and DRC
+python3 scripts/gen_fab.py
+```
+
+`flow.py` regenerates the placement and discards all routing, then pre-routes,
+autoroutes, finishes and places silkscreen, up to three attempts; Freerouting
+does not give the same result twice. Each attempt took 4-8 minutes to route
+here. A failed attempt is kept as `fab/route/attempt-N.kicad_pcb`.
 
 ## Regenerating
 

@@ -88,7 +88,10 @@ def main():
                 ok = not (set(k2) - {"unconnected_items"}) and not ({net, *vs} & o2) and len(o2) < len(open_nets)
             if ok:
                 print(net, "routed after lifting", *vs); kinds, open_nets = k2, o2; os.remove(bak); break
-            shutil.move(bak, PCB)
+            if os.path.exists(bak):          # attempt 3 of the first Megabank run lost it; keep going rather than crash
+                shutil.move(bak, PCB)
+            else:
+                print(net, "lift-and-retry backup missing; keeping the board as it is")
         else:
             print(net, "still open; tried lifting", cands[:6])
     # pre-routed vias the router did not end up using are just holes: drop them

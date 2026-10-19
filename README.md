@@ -14,8 +14,13 @@ It gives the 2068:
 
 **Status:** design. Nothing is built yet. Start with the
 [specification](docs/spec.md); the board's KiCad project (schematic done,
-parts placed on the TS-Pico v3's form factor, not yet routed) is in
+routed on the TS-Pico v3's form factor, DRC clean, not yet ordered) is in
 [hardware/](hardware/README.md).
+
+![The Megabank card, rendered from the routed KiCad board: the RP2350B controller in the middle, the two 2 MB SRAMs on the right, the CR2032 battery on the left, the bus buffers over the gold fingers](docs/images/megabank-top.png)
+
+*The routed card (KiCad render, 2026-10-18), the same 130 × 64 mm shape as
+the TS-Pico v3. Underside: [docs/images/megabank-bottom.png](docs/images/megabank-bottom.png).*
 
 ## Where the work lives
 

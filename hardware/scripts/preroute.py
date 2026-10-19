@@ -100,10 +100,11 @@ def main():
         via(name, xe, YV)
         if name in ("+3V3", "DVDD"):                  # their decoupling cap sits just below the via
             route(name, [(xe, YV), (xe, YV + 1.0)], 0.25)
-    # supply pin 29 shares its lane with the XIN track; pads 27/28 below it are spare, so it
-    # drops into their lanes to a via (clear of XIN above and I2C_SCL below)
-    route("+3V3", [(66.95, 26.6), (67.35, 26.6), (67.85, 27.1), (68.7, 27.2)], 0.15)
-    via("+3V3", 68.7, 27.2)
+    # supply pins 24/29 (linked under the package above): on v3 pin 29 dropped into the lanes of
+    # pads 27/28, spare there, to a via. On the Megabank 27/28 are nDOE and BE_REQ, so the link
+    # carries on under the package, between the pad row and the DVDD spine, to pin 15, whose fan
+    # via is on the plane already. 0.17 mm or more from every pad and from the spine.
+    route("+3V3", [(66.3, 28.6), (66.3, 29.85), (65.95, 30.2), (63.8, 30.2), (63.8, 30.95)], 0.15)
     # ---- U1's Z80-side pins (A0-A7): a via fan under its own body ---------------------------
     # U1's bottom pad row faces U2's top row across a 0.8 mm gap, so these pins can only leave
     # under U1, and all of them have to change layer (their fingers are bottom copper). Left to

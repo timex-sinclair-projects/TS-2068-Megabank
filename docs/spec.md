@@ -1039,9 +1039,9 @@ reference for what it changes.
 5. **Firmware: the RAM disk** and `tpi:ram`.
 6. **PicoVideo** update (its own repo).
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
-   JLCPCB), prototype, hardware tests. **Started (2026-10-18):** schematic
-   generated (ERC: one expected warning), parts placed on v3's form factor,
-   v3's RP2350B pre-routes in; not yet routed ([hardware/](../hardware/README.md)). Can run
+   JLCPCB), prototype, hardware tests. **Routed (2026-10-18):** schematic
+   generated (ERC: one expected warning), v3's form factor, routed by v3's
+   flow, DRC clean; not yet ordered ([hardware/](../hardware/README.md)). Can run
    in parallel with 2–6 once the register map is agreed.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. David leans towards only what
