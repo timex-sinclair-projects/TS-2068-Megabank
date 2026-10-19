@@ -13,7 +13,9 @@ It gives the 2068:
   kept through power-off by a battery.
 
 **Status:** design. Nothing is built yet. Start with the
-[specification](docs/spec.md).
+[specification](docs/spec.md); the board's KiCad project (schematic done,
+parts placed on the TS-Pico v3's form factor, not yet routed) is in
+[hardware/](hardware/README.md).
 
 ## Where the work lives
 
