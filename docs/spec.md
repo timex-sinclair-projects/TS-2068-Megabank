@@ -400,9 +400,10 @@ needs no pass-through of its own. **Gold fingers on the PCB edge (decided)**, us
 v2.2 Gerbers): 32 positions at 2.54 mm, 31 fingers a side, the key slot at
 position 6, an 83.66 × 8.25 mm tongue with 1 mm corner chamfers; pinout from
 the TS2068 Technical Manual (table 2.4.1-1). Order with hard gold if offered
-(else ENIG), a 30° bevel, and no copper within 0.3 mm of the slot. v3's
-assumption that side A is the top is still unverified: check it before
-ordering. **The body is v3's too (2026-10-18):** 130 × 56 mm with the
+(else ENIG), a 30° bevel, and no copper within 0.3 mm of the slot. Side A is
+the top: confirmed (2026-10-19) by v3 proto1, built with this footprint,
+reading addresses from side B and serving ROM bytes onto side A in a 2068
+([hardware/](../hardware/README.md#form-factor)). **The body is v3's too (2026-10-18):** 130 × 56 mm with the
 tongue below, v3's four M3 holes, the RP2350B cluster at v3's coordinates so
 its pre-routes carry over. The firmware loads over USB-C, as on v3, with SWD
 pads as well (open question 11). The KiCad project, its generators, the GPIO
@@ -1084,8 +1085,9 @@ reference for what it changes.
      fitting ([Parts](#parts)).
    - **The RP2350B's stepping.** Use a stepping without the E9 pad erratum
      (a pull-down that latches), or don't rely on internal pull-downs.
-   - **The edge fingers' sides:** confirm that side A is the top, as v3
-     assumes.
+   - **The edge fingers' sides:** **answered (2026-10-19):** side A is the
+     top, as v3 assumed; v3 proto1 proved it in a 2068
+     ([hardware/](../hardware/README.md#form-factor)).
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than

@@ -30,9 +30,17 @@ The same card as v3, so the two share the extender, brackets and standoffs:
 | Fingers | `TS2068_EdgeConnector_2x32`, 32 positions at 2.54 mm, 31 a side, key slot at position 6 |
 | Holes | M3 at (5, 5), (113.6, 4.2), (5, 51), (112, 51.5): v3's |
 
-The finger geometry and the side-A-is-top assumption are v3's; see v3's
-`hardware/README.md`, "Edge connector geometry". Check side A before ordering
-(spec, open question 6).
+The finger geometry is v3's; see v3's `hardware/README.md`, "Edge connector
+geometry". **Side A is the top (component) side, confirmed (2026-10-19)** by
+v3 proto1 in a 2068, whose finger footprint is this one: all 62 pads match
+v3.0-proto1's `TS2068_EdgeConnector_2x32` in position, size and layer, and
+the pin tables match too. On 2026-10-07 (tspico-hardware,
+`firmware/bringup/README.md`) that card logged every address the Z80 read
+through the side-B address fingers, the boot log matching the ROM exactly,
+then served the HOME ROM onto side A: /MREQ and /RD to time each read, /BE on
+A29, data on D0-D7. The 2068 booted to its "TS-Pico v3 ROM" banner, which
+only the card's copy carries. With the sides swapped, the address fingers
+would sit on data and control lines and none of that could work.
 
 ## Sheets
 
@@ -152,15 +160,16 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
 
 ## Next
 
-1. **Side A of the fingers** (spec, open question 6). The battery holder, the
-   slide switch and the TSOP I 48 are checked (above).
-2. **The SRAM rail with a fresh cell:** the LM66200 passes whichever input is
+Every footprint check before ordering is done: the battery holder, the slide
+switch, the TSOP I 48 (above) and side A of the fingers (Form factor).
+
+1. **The SRAM rail with a fresh cell:** the LM66200 passes whichever input is
    higher, and a new CR2032 reads up to about 3.3 V open circuit, against +3V3's
    3.25-3.35 V. At SRAM standby currents the cell may carry the rail some of the
    time with the 2068 on. Harmless to the data; it costs battery life. Measure on
    the prototype (spec, hardware test 3); a Schottky in series with the cell
    would settle it if needed.
-3. **Stock:** 42 CY62167EV30 at JLCPCB on 2026-10-18, enough for 20 boards.
+2. **Stock:** 42 CY62167EV30 at JLCPCB on 2026-10-18, enough for 20 boards.
 
 ## Routing
 
