@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "megabank")(type "KiCad")(uri "${KIPRJMOD}/lib/megabank.pretty")(options "")(descr "Megabank project footprints"))
+)

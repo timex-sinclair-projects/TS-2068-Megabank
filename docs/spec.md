@@ -402,8 +402,11 @@ position 6, an 83.66 × 8.25 mm tongue with 1 mm corner chamfers; pinout from
 the TS2068 Technical Manual (table 2.4.1-1). Order with hard gold if offered
 (else ENIG), a 30° bevel, and no copper within 0.3 mm of the slot. v3's
 assumption that side A is the top is still unverified: check it before
-ordering. The body's size is set at layout; how the firmware is loaded
-(USB-C, or SWD pads) is open question 11.
+ordering. **The body is v3's too (2026-10-18):** 130 × 56 mm with the
+tongue below, v3's four M3 holes, the RP2350B cluster at v3's coordinates so
+its pre-routes carry over. The firmware loads over USB-C, as on v3, with SWD
+pads as well (open question 11). The KiCad project, its generators, the GPIO
+map and the placement are in [`hardware/`](../hardware/README.md).
 
 ## Sharing the bus
 
@@ -1036,7 +1039,9 @@ reference for what it changes.
 5. **Firmware: the RAM disk** and `tpi:ram`.
 6. **PicoVideo** update (its own repo).
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
-   JLCPCB), prototype, hardware tests. Can run
+   JLCPCB), prototype, hardware tests. **Routed (2026-10-18):** schematic
+   generated (ERC: one expected warning), v3's form factor, routed by v3's
+   flow, DRC clean; not yet ordered ([hardware/](../hardware/README.md)). Can run
    in parallel with 2–6 once the register map is agreed.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. David leans towards only what
