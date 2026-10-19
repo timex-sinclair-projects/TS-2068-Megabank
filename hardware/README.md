@@ -139,12 +139,21 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
   locating holes 3 mm apart, the four 1.05 x 0.7 mm mounting pads. The actuator
   stands 1.45 mm proud of the body; it faced the right edge but stopped 2.1 mm
   short of it, so SW5 moved to x 127.1, which puts its tip at the edge (x 130).
+- **SRAM, TSOP I 48, Infineon 51-85183 \*F** (CY62167EV30 datasheet 002-24706
+  Rev \*B, figure 12; JEDEC MO-142 DD; the DV30 uses the same drawing): KiCad's
+  `TSOP-I-48_18.4x12mm_P0.5mm` matches. Pin 1 top left, 1-24 down the left
+  side, 25-48 up the right, as the drawing's standard pin-out (top view), which
+  is what the -ZXI parts are. Pitch 0.50 mm, 24 pins spanning 11.50 mm. The
+  pads (1.575 x 0.30 mm, centred 9.688 mm out) run from 8.90 to 10.475 mm: 0.475
+  mm past the 10.00 mm lead tips (D = 20.00) and 0.40 mm inside the heel at
+  the longest foot (L = 0.70), against leads 0.17-0.27 mm wide, which leaves
+  0.20 mm between pads. Body outline 18.5 x 12.1 mm on F.Fab, against 18.40 x
+  12.00.
 
 ## Next
 
-1. **Check against drawings:** TSOP-I 48 against Infineon's 51-85183, then
-   side A of the fingers (spec, open question 6). The battery holder and the
-   slide switch are done (above).
+1. **Side A of the fingers** (spec, open question 6). The battery holder, the
+   slide switch and the TSOP I 48 are checked (above).
 2. **The SRAM rail with a fresh cell:** the LM66200 passes whichever input is
    higher, and a new CR2032 reads up to about 3.3 V open circuit, against +3V3's
    3.25-3.35 V. At SRAM standby currents the cell may carry the rail some of the
