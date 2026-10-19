@@ -986,7 +986,7 @@ line to fix.
    74LS245) for an I/O cycle it does not answer, then on `IN` from FCh/FDh
    they fight the board's data buffer. Gustavo's test: a logic analyser on
    pins 1 (DIR) and 19 (/G) of U5 and U9, with /IORQ, /RD, /WR and /M1, and
-   this program run from ZEUS:
+   this program, assembled with ZEUS and run:
 
    ```
    10 org 40000
@@ -1005,6 +1005,10 @@ line to fix.
    (Gustavo's listing has `LD B,256`; B is 8 bits, and 0 gives the same 256
    passes.) Pass: none of the four pins changes state in any of these I/O
    cycles. Run it with nothing on the bus and again with the TS-Pico fitted.
+   Eight channels at 24 MHz are enough (an I/O cycle is about 1 µs): a
+   USB analyser of the fx2lafw kind with PulseView takes 5 V inputs. The v3
+   card can't stand in for one: U5 and U9 are on the 2068's board, not the
+   edge connector, and v3 doesn't bring in /M1.
    The v3 card answering `IN 0Eh` without trouble is a good sign, not proof:
    FCh and FDh sit next to the SCLD's own F4h, FEh and FFh. If they do
    change, see open question 15.
