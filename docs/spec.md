@@ -318,7 +318,9 @@ question 4), new registers, settings, all through a firmware update.
 | /CE1 of each SRAM, write inhibit, data buffer enable | 4 |
 | Write-protect switch | 1 |
 | Battery: ADC (GPIO40–47) and BAT_EN | 2 |
-| **Total** | **42 of 48** |
+| /BE read back, through the control buffer's spare channel | 1 |
+| /INT and /NMI in, through a 74LVC2G34; /NMI out, open-drain (open question 16) | 3 |
+| **Total** | **46 of 48** |
 
 The data buffer's direction comes from the buffered /RD, not from a pin.
 
@@ -334,6 +336,8 @@ Candidates, with JLCPCB stock on 2026-10-16. Availability is open question 6.
 | Controller | RP2350B (QFN-80), with v3's core circuit: QSPI flash, crystal, core regulator | C42415655 | 4,873 in stock. Copy v3's RP2350B schematic sheet. L1, the core regulator's inductor (Abracon AOTA-B201610S3R3-101-T, C42411119), had 4 in stock on 2026-10-16. **Keep it (decided):** no other part is approved for the RP235x, which is sensitive to the inductor's orientation (dot on pad 2, DVDD, as on v3). Get it placed by JLCPCB through its parts pre-order (from LCSC's stock, about 55) or Global Sourcing (DigiKey about 26,000, Mouser about 14,000). Failing that, order from DigiKey, mark L1 DNP, and fit it by hand. Generic 3.3 µH 0806 inductors are plentiful but unapproved and unmarked. |
 | Buffers | 4 × 74LVC245APW: A0–A7, A8–A15 and the control lines one way; D0–D7 both ways | C6082 | The same part as v3. Their power-off protection (Ioff) means that with the 2068 off they neither drive nor load the SRAM side. |
 | /BE driver | 74LVC1G06 (inverting, open-drain) | C7828 | Wire-ORs with v3's 74LVC06. The RP2350's reset state (input, pull-down) leaves /BE released. |
+| /NMI driver | 74LVC1G06, a second one | C7828 | The same part, so no second loading fee. Wire-ORs with v3's driver and NMI button; a 10 k pull-down holds it released until the firmware runs, as for /BE. |
+| /INT, /NMI in | SN74LVC2G34DCKR (dual buffer, SC-70-6, TI), on 3.3 V | C14461 | 21,890 in stock on 2026-10-19. 5 V-tolerant inputs, as the 74LVC245s. |
 | Chip enables | The CY62167's two: /CE1 (active low) and CE2 (active high) | | CE2 low deselects the chip whatever /CE1 does, including in data retention. **Both chips' CE2 come from the supervisor**, with a pull-down to ground, so they are high only while 3.3 V is good. **Each chip's /CE1 comes straight from the controller**, qualified by /MREQ, with a pull-down so it sits at a logic level on battery. No decoder, and no logic on the SRAM rail. |
 | /WE gate | SN74LVC1G32DBVR (OR, SOT-23-5, TI), on 3.3 V | C10096 | 139,210 in stock on 2026-10-16. SRAM /WE = buffered /WR OR the controller's write inhibit, which it sets per chunk from `WPROT` and the switch. The write-inhibit line has a **pull-up**, so writes are blocked until the controller's firmware runs: Z80 writes during its boot cannot reach the RAM disk. |
 | Power mux | LM66200 (ideal-diode ORing, 1.6–5.5 V, 1.32 µA) | C3235556 | Feeds the SRAM rail from 3.3 V or the battery. **Not the TPS2115A:** it draws about 55 µA from the battery, which would empty a coin cell in months. **Not plain diodes:** with 3.3 V on, the SRAM rail must stay close to 3.3 V, or the buffers and the controller push current into the SRAM's input clamps. |
@@ -1080,7 +1084,7 @@ reference for what it changes.
 5. **Firmware: the RAM disk** and `tpi:ram`.
 6. **PicoVideo** update (its own repo).
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
-   JLCPCB), prototype, hardware tests. **Routed (2026-10-18):** schematic
+   JLCPCB), prototype, hardware tests. **Routed (2026-10-18; re-routed 2026-10-19 with /INT and /NMI):** schematic
    generated (ERC: one expected warning), v3's form factor, routed by v3's
    flow, DRC clean; not yet ordered ([hardware/](../hardware/README.md)). Can run
    in parallel with 2–6 once the register map is agreed.
@@ -1163,14 +1167,15 @@ reference for what it changes.
     an I/O cycle as it does in a memory cycle; if so, the controller pulls
     /BE for its own `IN`s too (a firmware change). If not, other ports, or a
     board change. Either way the board must not drive D0–D7 against them.
-16. **/INT and /NMI on the board** (Gustavo's suggestion). The edge has /INT
-    on A14 and /NMI on A15; the board leaves both unconnected, and GPIO43–47
-    are spare. /INT in, /NMI out (open-drain, like /BE) and /NMI in would let
-    the controller see the frame interrupt and raise NMIs of its own, for
-    mapping that the Z80 does not set up through FCh/FDh. U4 has no free
-    channel, so /INT and /NMI in need a small LVC buffer, and /NMI out a
-    second open-drain gate (a 74LVC2G06 in U5's place takes /BE and /NMI).
-    The board is routed but not ordered: decide before it is.
+16. **/INT and /NMI on the board** (Gustavo's suggestion). **Added
+    (2026-10-19):** /INT (finger A14) and /NMI (A15) come in through a
+    74LVC2G34 to GPIO43 and GPIO44, and GPIO45 pulls /NMI low through a
+    second 74LVC1G06, open-drain like /BE. The controller can see the frame
+    interrupt and raise NMIs of its own, for mapping that the Z80 does not
+    set up through FCh/FDh. Still open: what the firmware does with them. No
+    register uses them yet. Note that the v3 card also drives /NMI (its
+    button and firmware), so an NMI handler can't tell who raised it unless
+    the board says so in a register.
 
 ## Sources
 

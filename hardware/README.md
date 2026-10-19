@@ -1,20 +1,21 @@
 # Megabank KiCad project
 
-Status 2026-10-18: **routed, DRC clean at every severity** (no errors, no warnings,
+Status 2026-10-19: **routed, DRC clean at every severity** (no errors, no warnings,
 nothing unconnected), not yet ordered. The board has the TS-Pico v3's form factor
 and is built with v3's script pipeline (tspico-hardware, `hardware/scripts/`),
 copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
 
 - **Schematic:** four sheets, generated. ERC: one warning, expected (below).
 - **Board:** outline, gold fingers and mounting holes are v3's. Routed by
-  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 1768 track
-  segments (1286 top, 482 bottom), 326 vias, all 0.6/0.3 mm, narrowest track
-  0.11 mm, nothing on the plane layers. Closed on the second attempt. Silkscreen:
-  81 of 82 designators placed; C39 is hidden, as on v3.
+  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 2107 track
+  segments (1455 top, 652 bottom), 357 vias, all 0.6/0.3 mm, narrowest track
+  0.13 mm, nothing on the plane layers. Closed on the second attempt (re-routed
+  2026-10-19 for /INT and /NMI, spec open question 16). Silkscreen: 86 of 87
+  designators placed; C39 is hidden, as on v3.
 - **Fab files:** `python3 scripts/gen_fab.py` writes the Gerbers, BOM and CPL
   to `fab/jlcpcb/` (ignored by git); `fab/NOTES.md` lists what to check on upload.
 - **Parts:** every fitted part has an LCSC number. About $25-27 a board in parts
-  at 10 boards, plus about $42 in extended-part fees once; the two SRAMs are
+  at 10 boards, plus about $45 in extended-part fees once (the 74LVC2G34 added one); the two SRAMs are
   $19.46 of it.
 
 ## Form factor
@@ -38,7 +39,7 @@ The finger geometry and the side-A-is-top assumption are v3's; see v3's
 | Sheet | Generator | Contents |
 |---|---|---|
 | `megabank.kicad_sch` | by hand | Root: four sheets, flat, global labels |
-| `interface.kicad_sch` | `gen_interface.py` | P1 fingers; U1/U2 address buffers (always on: BA0-BA15), U3 data buffer (DIR = /RD, /OE = nDOE), U4 control buffer; U5 74LVC1G06 /BE driver; pulls R1-R3 |
+| `interface.kicad_sch` | `gen_interface.py` | P1 fingers; U1/U2 address buffers (always on: BA0-BA15), U3 data buffer (DIR = /RD, /OE = nDOE), U4 control buffer; U5 74LVC1G06 /BE driver; U6 74LVC1G06 /NMI driver; U7 74LVC2G34 /INT and /NMI in; pulls R1-R4 |
 | `memory.kicad_sch` | `gen_memory.py` | U10/U11 CY62167EV30 as 2M x 8; U12 /WE gate; ~CE1 pull-downs, WINH pull-up, BHE/BLE links |
 | `mcu.kicad_sch` | `gen_mcu.py` | v3's RP2350B core, same designators; USB-C; RUN, BOOTSEL; SW5 write protect; the GPIO map |
 | `power.kicad_sch` | `gen_power.py` | +5V diode-OR (edge, USB), TLV1117LV33, TPS3839 -> CE2, LM66200 -> VSRAM, CR2032, battery monitor |
@@ -69,7 +70,10 @@ strobes, /BE, the ~CE1s and the page bits. Everything both need sits in 16-31:
 | 40 | BAT_ADC | ADC0 |
 | 41 | BAT_EN | |
 | 42 | nBE_L | /BE read back through U4's spare channel |
-| 43-47 | spare | |
+| 43 | nINT_L | /INT, through U7 |
+| 44 | nNMI_L | /NMI, through U7 |
+| 45 | NMI_REQ | to U6, pulled down (R4) |
+| 46-47 | spare | |
 
 ### Decisions taken here, beyond the spec
 
@@ -99,6 +103,8 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
 
 - **Over the fingers,** as v3: data U3 (x 40), high address U2 (x 63) over
   A15-A8, control U4 (x 80) over /MREQ to /RFSH, /BE driver U5 by finger A29.
+  /INT and /NMI over their fingers (A14, A15) between C3 and U2: U7 (x 51.5),
+  U6 and R4 (x 56.5).
   Low address U1 above U2.
 - **RP2350B cluster** at v3's coordinates with v3's designators (U20 at
   (62, 26), 90°), so v3's pre-routes carry over. Flash U21 to its left.

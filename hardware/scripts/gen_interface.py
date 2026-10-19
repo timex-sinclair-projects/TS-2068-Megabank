@@ -12,6 +12,10 @@ Contents (docs/spec.md, "Hardware"):
   R2   nDOE pull-up: the data buffer stays off the bus until the firmware runs
   R3   /BE pull-up to the 2068's +5V, DNP: the bus already has v3's 2k2 (R14 on v3);
        fit it only if open question 13 says the board needs its own
+  U6   74LVC1G06 open-drain inverter: NMI_REQ -> /NMI (wire-ORs with v3's NMI driver and button)
+  R4   NMI_REQ pull-down, as R1
+  U7   74LVC2G34 /INT and /NMI -> 3.3 V copies (nINT_L, nNMI_L) for the controller
+       (spec, open question 16). /NMI's pull-up is the 2068's own, as for v3.
 Unlike v3 the address buffers are not a byte mux: the SRAM needs A0-A12 on
 every memory cycle, so every address bit has its own 3.3 V net (BAn).
 Net naming: n<NAME> = active low; _L = 3.3 V copy of a bus signal.
@@ -24,6 +28,7 @@ from schlib import Sheet  # noqa: E402
 
 TSSOP20 = "Package_SO:TSSOP-20_4.4x6.5mm_P0.65mm"
 SC70_5 = "Package_TO_SOT_SMD:SOT-353_SC-70-5"
+SC70_6 = "Package_TO_SOT_SMD:SOT-363_SC-70-6"
 R0603 = "Resistor_SMD:R_0603_1608Metric"
 C0603 = "Capacitor_SMD:C_0603_1608Metric"
 
@@ -41,7 +46,7 @@ def main():
         "A1": "GND", "B1": "GND", "A32": "GND", "B32": "GND", "B7": "GND", "B8": "GND",
         "A4": "D7", "A7": "D0", "A8": "D1", "A9": "D2", "A10": "D6", "A11": "D5", "A12": "D3", "A13": "D4",
         "A17": "nMREQ", "A18": "nIORQ", "A19": "nRD", "A20": "nWR", "A24": "nRESET",
-        "A25": "nM1", "A26": "nRFSH", "A29": "nBE",
+        "A25": "nM1", "A26": "nRFSH", "A29": "nBE", "A14": "nINT", "A15": "nNMI",
         "B10": "A0", "B11": "A1", "B12": "A2", "B13": "A3",
         "B14": "A15", "B15": "A14", "B16": "A13", "B17": "A12", "B18": "A11", "B19": "A10", "B20": "A9", "B21": "A8",
         "B22": "A7", "B23": "A6", "B24": "A5", "B25": "A4",
@@ -112,8 +117,23 @@ def main():
     s.text("U5: open drain, so it wire-ORs with v3's 74LVC06 on /BE. R1: BE_REQ held low (released) until the firmware runs.", 245, 80, 1.5)
     s.text("R2: data buffer held off. R3 (DNP): /BE pull-up to the 2068's +5V, only if the bus's own (v3's 2k2) proves weak.", 245, 83, 1.5)
 
+    # ---- /INT and /NMI: U6 /NMI driver, U7 input buffers ---------------------------------
+    U6 = s.place("74xGxx:74LVC1G06", "U6", "74LVC1G06", SC70_5, 260, 120)
+    s.glabel("NMI_REQ", U6.pin("2"), IN); s.label("nNMI", U6.pin("4"))
+    s.label("+3V3", U6.pin("5")); s.label("GND", U6.pin("3"))
+    R4 = s.place("Device:R", "R4", "10k", R0603, 290, 120)
+    s.glabel("NMI_REQ", R4.pin("1"), IN); s.label("GND", R4.pin("2"))
+    U7a = s.place("74xGxx:74LVC2G34", "U7", "74LVC2G34", SC70_6, 260, 150, unit=1)
+    s.label("nINT", U7a.pin("1")); s.glabel("nINT_L", U7a.pin("6"), OUT)
+    U7b = s.place("74xGxx:74LVC2G34", "U7", "74LVC2G34", SC70_6, 260, 165, unit=2)
+    s.label("nNMI", U7b.pin("3")); s.glabel("nNMI_L", U7b.pin("4"), OUT)
+    U7c = s.place("74xGxx:74LVC2G34", "U7", "74LVC2G34", SC70_6, 285, 157, unit=3)
+    s.label("+3V3", U7c.pin("5")); s.label("GND", U7c.pin("2"))
+    s.text("U6: open drain, like U5; R4 holds NMI_REQ low (released) until the firmware runs.", 245, 135, 1.5)
+    s.text("U7: /INT and /NMI in, for the controller (spec, open question 16). /NMI's pull-up is the 2068's.", 245, 180, 1.5)
+
     # ---- decoupling ------------------------------------------------------------
-    for k in range(5):          # C1-C4: U1-U4, C5: U5
+    for k in range(7):          # C1-C4: U1-U4, C5-C7: U5-U7
         C = s.place("Device:C", f"C{k + 1}", "100n", C0603, 40 + 9 * k, 255)
         s.label("+3V3", C.pin("1")); s.label("GND", C.pin("2"))
 

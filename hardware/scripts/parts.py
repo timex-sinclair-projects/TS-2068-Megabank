@@ -32,6 +32,7 @@ PARTS = {
     ("GD25Q128ESIGR", "SOIC-8_5.3x5.3mm_P1.27mm"): ("GD25Q128ESIGR", "C2928891", "extended, as v3"),
     ("74LVC245APW", T20): ("74LVC245APW,118", "C6082", "extended, Nexperia, as v3"),
     ("74LVC1G06", "SOT-353_SC-70-5"): ("SN74LVC1G06DCKR", "C7828", "extended, TI, SC-70-5"),
+    ("74LVC2G34", "SOT-363_SC-70-6"): ("SN74LVC2G34DCKR", "C14461", "extended, TI, SC-70-6; 21,890 in stock 2026-10-19"),
     ("SN74LVC1G32DBVR", "SOT-23-5"): ("SN74LVC1G32DBVR", "C10096", "extended, TI"),
     ("TLV1117LV33", "SOT-223-3_TabPin2"): ("TLV1117LV33DCYR", "C15578", "extended, TI, as v3"),
     ("TPS3839G33", "SOT-23"): ("TPS3839G33DBZR", "C485802", "extended, TI, 3.08 V, push-pull active low"),
