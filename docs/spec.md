@@ -158,8 +158,15 @@ Timex's 1–253. With `BASE` = 193 only banks 193–253 (61) are usable.
 
 ## Registers
 
-Two ports, decoded from A7–A0 only (A8–A15 ignored, like the v3 card):
-**FDh selects a register, FCh reads or writes it (decided).** These are the
+Two ports, decoded from A7–A0 only (A8–A15 ignored, like the v3 card), and
+only in a real I/O cycle: /IORQ low with /RD or /WR low, **and /M1 high
+(decided)**. An interrupt acknowledge is /M1 with /IORQ, and its address bus
+holds the PC, so a decode on /IORQ and A7–A0 alone would take an interrupt at
+an address ending FCh or FDh for a port access. Requiring /RD or /WR already
+excludes it, as on the v3 card; /M1 is checked as well because it is free (it
+is already on GPIO24) and keeps the rule true if the firmware ever acts on
+/IORQ before the strobe. **FDh selects a register, FCh reads or writes it
+(decided).** These are the
 TPSG's BCMDPT and BDATPT. Taking FDh rules out emulating a Spectrum 128's AY
 (FFFDh/BFFDh) on the v3 card later; David prefers later Yamaha sound chips
 anyway **(decided)**.
@@ -287,7 +294,9 @@ question 4), new registers, settings, all through a firmware update.
   PIO table, a DMA-chained lookup or core 1 is settled on the bench (open
   question 2).
 - **Register writes** are I/O cycles of over a microsecond. A PIO program
-  catches `OUT` to FDh/FCh, as v3's `io_snoop` does, and core 1 updates the
+  catches `OUT` to FDh/FCh, as v3's `io_snoop` does (v3 waits on a gated
+  /IOWR; here /IORQ, /WR and /M1 arrive separately and the program checks all
+  three, [Registers](#registers)), and core 1 updates the
   tables before the next memory read. `IN` from FCh/FDh is answered the way v3's
   `io_drive` answers `IN 0Eh`.
 - **Settings** that were switches and jumpers (`BASE`, `SIZE`) live in the
@@ -971,7 +980,35 @@ line to fix.
    while `IN 254` reads the keyboard (30 with ENTER still down). So nothing
    answers FCh or FDh: the reads are a floating bus, D7 keeping whatever
    charge is left on it. **FCh/FDh stand (decided).**
-2. **An emulator model.** Add the board to our ZEsarUX fork (memory reads and
+2. **The 2068's own data buffers stay off for FCh/FDh.** Step 1 cannot
+   show this: a buffer turned on facing an undriven bus reads as a floating
+   bus too. If the SCLD turns on the 2068's data buffers (U5 and U9,
+   74LS245) for an I/O cycle it does not answer, then on `IN` from FCh/FDh
+   they fight the board's data buffer. Gustavo's test: a logic analyser on
+   pins 1 (DIR) and 19 (/G) of U5 and U9, with /IORQ, /RD, /WR and /M1, and
+   this program run from ZEUS:
+
+   ```
+   10 org 40000
+   20 ent
+   30 DI
+   40 LD B,0          ; 256 passes
+   50 LBL1: IN A,(#FC)
+   60 IN A,(#FD)
+   70 OUT (#FC),A
+   80 OUT (#FD),A
+   90 DJNZ LBL1
+   100 EI
+   110 RET
+   ```
+
+   (Gustavo's listing has `LD B,256`; B is 8 bits, and 0 gives the same 256
+   passes.) Pass: none of the four pins changes state in any of these I/O
+   cycles. Run it with nothing on the bus and again with the TS-Pico fitted.
+   The v3 card answering `IN 0Eh` without trouble is a good sign, not proof:
+   FCh and FDh sit next to the SCLD's own F4h, FEh and FFh. If they do
+   change, see open question 15.
+3. **An emulator model.** Add the board to our ZEsarUX fork (memory reads and
    writes through the owner table, ports FCh/FDh). The ROM and firmware can
    then be developed and tested with no hardware, through the existing
    `tools/emu` bridge. **Done (2026-10-16), merged:**
@@ -982,11 +1019,11 @@ line to fix.
    checks it over ZRCP on the stock ROM, in CI. Not modelled: timing, the
    battery-low bit, snapshots. Note for test scripts: ZEsarUX's hard reset
    does nothing on a TS-2068; use its plain reset (`reset-cpu`).
-3. **ROM host tests** for the mover's window choice and the boot-time
+4. **ROM host tests** for the mover's window choice and the boot-time
    detection, in the style of the existing `rom_*_hosttest.py`.
-4. **Firmware host tests** for the file system: format, save/load/erase,
+5. **Firmware host tests** for the file system: format, save/load/erase,
    fragmentation and compaction, a corrupt superblock, the generation counter.
-5. **The controller's firmware** on an RP2350B development board, with the
+6. **The controller's firmware** on an RP2350B development board, with the
    v3 card's PIO programs as the starting point: register writes and reads,
    the owner table, /BE and the page bits against a logic analyser, before
    any Megabank PCB exists.
@@ -1028,7 +1065,7 @@ Each phase is its own branch and PR, and each PR updates the programmer's
 reference for what it changes.
 
 1. **Port test** on a 2068 (testing step 1). **Done (2026-10-16):** FCh/FDh
-   stand.
+   stand. Still to do: the buffer test (testing step 2).
 2. **Emulator model** in the ZEsarUX fork. **Done (2026-10-16):**
    [zesarux-tspico#2](https://github.com/timex-sinclair-projects/zesarux-tspico/pull/2),
    merged into `tspico-device`; its test passes on macOS, Linux and Windows.
@@ -1054,7 +1091,8 @@ reference for what it changes.
 1. **Do ports FCh/FDh collide with the 2068 itself?** **Answered
    (2026-10-16): no** ([Testing](#testing), step 1). A repeat with nothing on
    the expansion bus would remove the last doubt; the TS-Pico answers only
-   0Eh/0Fh.
+   0Eh/0Fh. That the 2068's data buffers stay off is still to be measured
+   (testing step 2, open question 15).
 2. **/BE timing** through the expansion bus, in every slot, with the v3 card
    and PicoVideo fitted. Measured on the prototype. The v3 card's PIO path
    already wins this race on a 2068; the board's must too. Also measured: how
@@ -1115,6 +1153,20 @@ reference for what it changes.
     listings take a pattern, as `d:` does; and how the open-stream mask
     travels in `r:` commands (decided with `docs/PROTOCOL.md`, with open
     question 3).
+
+15. **If the 2068's data buffers turn on for FCh/FDh** (testing step 2),
+    how the board keeps them off. First check whether /BE disables them in
+    an I/O cycle as it does in a memory cycle; if so, the controller pulls
+    /BE for its own `IN`s too (a firmware change). If not, other ports, or a
+    board change. Either way the board must not drive D0–D7 against them.
+16. **/INT and /NMI on the board** (Gustavo's suggestion). The edge has /INT
+    on A14 and /NMI on A15; the board leaves both unconnected, and GPIO43–47
+    are spare. /INT in, /NMI out (open-drain, like /BE) and /NMI in would let
+    the controller see the frame interrupt and raise NMIs of its own, for
+    mapping that the Z80 does not set up through FCh/FDh. U4 has no free
+    channel, so /INT and /NMI in need a small LVC buffer, and /NMI out a
+    second open-drain gate (a 74LVC2G06 in U5's place takes /BE and /NMI).
+    The board is routed but not ordered: decide before it is.
 
 ## Sources
 
