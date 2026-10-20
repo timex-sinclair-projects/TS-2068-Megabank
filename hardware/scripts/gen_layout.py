@@ -55,6 +55,11 @@ P["U5"], P["C5"] = (92, R3Y - 2.5, 0), (95.5, R3Y - 2.5, 90)
 P["R1"], P["R3"] = (92, R3Y + 0.5, 0), (96.5, R3Y + 1.5, 90)      # BE_REQ pull-down; /BE pull-up (DNP)
 P["U1"], P["C1"] = (63, R2Y, 270), (68.4, R2Y, 90)
 P["R2"] = (55.5, 42.7, 0)                                           # nDOE pull-up, where v3 has its enable pull-ups
+# /INT and /NMI over their fingers (A14 x 54.0, A15 x 56.6), between C3 and U2: input buffers
+# U7, /NMI driver U6 and its pull-down R4
+P["U7"], P["C7"] = (51.5, 48.0, 0), (51.5, 51.5, 0)
+P["U6"], P["C6"] = (56.5, 48.0, 0), (56.5, 51.5, 0)
+P["R4"] = (56.5, 45.2, 0)
 
 # ---- RP2350B core: v3's placement, unchanged, so preroute.py carries over -----------
 # Rotated so GPIO0-7 (here the SD bus) sit at the bottom-left corner, the control GPIOs

@@ -19,7 +19,7 @@ routed on the TS-Pico v3's form factor, DRC clean, not yet ordered) is in
 
 ![The Megabank card, rendered from the routed KiCad board: the RP2350B controller in the middle, the two 2 MB SRAMs on the right, the CR2032 battery on the left, the bus buffers over the gold fingers](docs/images/megabank-top.png)
 
-*The routed card (KiCad render, 2026-10-18), the same 130 × 64 mm shape as
+*The routed card (KiCad render, 2026-10-19), the same 130 × 64 mm shape as
 the TS-Pico v3. Underside: [docs/images/megabank-bottom.png](docs/images/megabank-bottom.png).*
 
 ## Where the work lives

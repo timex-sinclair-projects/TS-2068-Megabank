@@ -23,7 +23,10 @@ or GPIO16, so everything both programs need sits in GPIO16-31:
   GPIO40     BAT_ADC       ADC0
   GPIO41     BAT_EN
   GPIO42     nBE_L         /BE read back
-  GPIO43-47  spare
+  GPIO43     nINT_L        /INT, through U7                                window 16
+  GPIO44     nNMI_L        /NMI, through U7                                window 16
+  GPIO45     NMI_REQ       to U6 -> /NMI (R4 pull-down)                    window 16
+  GPIO46-47  spare
 """
 import os
 import sys
@@ -51,6 +54,7 @@ GPIO = {
     26: ("nDOE", OUT), 27: ("BE_REQ", OUT), 28: ("nCE1_0", OUT), 29: ("nCE1_1", OUT),
     **{30 + i: (f"PA{13 + i}", OUT) for i in range(8)},
     38: ("WINH", OUT), 39: ("nWP", IN), 40: ("BAT_ADC", BI), 41: ("BAT_EN", OUT), 42: ("nBE_L", IN),
+    43: ("nINT_L", IN), 44: ("nNMI_L", IN), 45: ("NMI_REQ", OUT),
 }
 SPARE = [g for g in range(48) if g not in GPIO]
 
