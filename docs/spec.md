@@ -228,14 +228,26 @@ chunk *n*), the first two `OUT`s are enough.
 - **Chunk 3 (or chunk 7 in 64-column mode)** holds the 2068's bank-switching
   code and the machine stack. Timex's rules reserve it. Map over it only if you
   know you don't need either.
-- **The screen.** Mapping a bank into chunk 2 (4000h–5FFFh) hides the screen
-  memory from the Z80, not from the display: the 2068 keeps showing its own
-  RAM. Writes there go to the bank.
+- **The screen.** The SCLD draws the picture from its own 16K of RAM
+  (4000h–7FFFh), whatever the Z80 sees there. Mapping a bank into chunk 2 or
+  3 hides that RAM from the Z80, not from the display: the 2068 keeps showing
+  it, and writes go to the bank. So a bank can never be the screen; a frame
+  kept in a bank has to be copied into the SCLD's RAM to be seen. Whether
+  Z80 accesses to a bank in chunk 2 or 3 are still contended is open
+  question 17.
 - **The RAM disk's banks** belong to the RAM disk ([below](#the-ram-disk)).
   Ask the ROM for pages rather than picking bank numbers yourself.
 
 **Speed.** `LDIR` moves a byte in 21 T-states: about 160 KB a second at the
-2068's 3.53 MHz. A 6K screen copies out of a bank in about 40 ms.
+2068's 3.53 MHz. A 6K screen copies out of a bank in about 40 ms, **plus
+contention**: the screen is in the SCLD's 16K (4000h–7FFFh), and every
+access there goes through the SCLD, which stretches the Z80's clock while it
+fetches the picture. Reads from the bank are uncontended; the writes into
+the display file pay. Copy in the border and vertical blank where you can.
+For whole-screen updates in the standard mode, copy into the screen not
+being shown (4000h or 6000h) and flip with bit 0 of port FFh at the frame
+interrupt, keeping its other bits (bit 7 is EXROM/DOCK, bit 6 the frame
+interrupt disable): no tearing. ECM uses both halves, so it cannot flip.
 
 ## Hardware
 
@@ -1176,6 +1188,20 @@ reference for what it changes.
     register uses them yet. Note that the v3 card also drives /NMI (its
     button and firmware), so an NMI handler can't tell who raised it unless
     the board says so in a register.
+17. **Is a bank in chunk 2 or 3 contended?** The SCLD manages the 2068's
+    lowest 16K (4000h–7FFFh): Z80 accesses there go through it and are
+    slowed while it fetches the picture, and it keeps generating video when
+    the Z80 maps something else over those chunks. When the board owns
+    chunk 2 or 3 and pulls /BE, does the SCLD still stretch the clock? That
+    depends on whether its contention logic looks at /BE (its HOME select) or
+    only at A14–A15 and /MREQ. If the latter, the board in chunks 2 and 3
+    runs at contended speed, not "full memory speed". To test: time a loop
+    of reads from a bank in chunk 2 and in chunk 4, during the picture, or
+    watch CLK on a scope. Raised by David (2026-10-20) after Jon's video
+    proposal, which also suggests a use if the answer is "uncontended":
+    PicoVideo could take uploads written into a bank-owned chunk 2 or 3 at
+    full speed (its change under [PicoVideo](#picovideo) would then need a
+    mode that keeps such writes rather than ignoring them).
 
 ## Sources
 
