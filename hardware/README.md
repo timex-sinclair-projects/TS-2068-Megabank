@@ -139,7 +139,7 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
 ```bash
 cd hardware
 PY=/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
-$PY scripts/flow.py --jar <freerouting-2.4.1.jar>    # needs Homebrew's openjdk (autoroute.py's JAVA)
+$PY scripts/flow.py                                   # jar from $FREEROUTING_JAR (or --jar); needs Homebrew's openjdk
 scripts/check.sh                                      # ERC (one expected warning) and DRC
 python3 scripts/gen_fab.py
 ```
