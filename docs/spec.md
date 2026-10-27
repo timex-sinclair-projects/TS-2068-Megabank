@@ -33,6 +33,8 @@ those still to be checked on hardware are listed under [Open questions](#open-qu
 - [The board](#the-board): what it does on the bus
 - [Registers](#registers): ports FCh/FDh
 - [Programming it](#programming-it): for people writing 2068 software
+- [ZXDesk](#zxdesk): the first program for the board, and its notes kept
+  through power-off
 - [Hardware](#hardware): the RP2350B controller, parts for JLCPCB
   assembly, battery backup, timing
 - [Sharing the bus](#sharing-the-bus): the v3 card, PicoVideo, BUSISO
@@ -236,6 +238,110 @@ chunk *n*), the first two `OUT`s are enough.
 
 **Speed.** `LDIR` moves a byte in 21 T-states: about 160 KB a second at the
 2068's 3.53 MHz. A 6K screen copies out of a bank in about 40 ms.
+
+## ZXDesk
+
+Jon's 2068 port of ZXDesk, a windowed desktop with notes, files, a clock and
+a calendar, is the first program looked at for the board, and a GUI of the
+kind open question 8 asks about. Its two builds are in [examples/](../examples/), read
+from the binaries (2026-10-27); there is no source here.
+
+| Build | Loader | Code | Screen | Stack, IM 2 table | Note store |
+|---|---|---|---|---|---|
+| `zxdesk2068.tap` | `CLEAR 27647`, `RANDOMIZE USR 33280` | 6C00h | standard (FFh = 0) | BD00h, BE00h | DF51h–FEFFh |
+| `zxdesk2068-512.tap` | `CLEAR 30719`, `RANDOMIZE USR 36352` | 7800h | 512 columns (FFh = 6) | C300h, C400h | E551h–FEFFh |
+
+**What it does with the machine.** It writes 0 to F4h, sets FFh, takes over
+with its own IM 2 handler and never calls the ROM. It reads a Kempston mouse
+(FBDFh, FFDFh, FADFh), a Kempston joystick (1Fh), the joystick ports
+through the 2068's AY (F5h/F6h) and the keyboard, and beeps through FEh. A
+saved note goes into the note store, a heap of blocks with 4-byte headers
+that it formats at every start. Nothing goes to tape or the SD card, so
+every note is lost at power-off.
+
+**With the board fitted, today: no change.** The board starts with nothing
+mapped and ZXDesk never touches FCh or FDh. One thing for Jon: the code
+still carries the Spectrum 128's AY routine, writing FFFDh and BFFDh. The
+board decodes A7–A0 only, so both writes would land on FDh and change the
+selected register (harmless: only a write to FCh changes the mapping). On
+the 2068 the flag that selects that routine is set to 0 at start and never
+changed, so the beeper is used instead. Better to remove it than rely on
+that.
+
+### Notes that survive power-off
+
+The board's first use for ZXDesk: put the note store in a battery-backed
+page in chunk 7 (E000h–FFFFh). Every saved note is then kept as soon as it
+is written, with no save step. The changes are Jon's:
+
+1. **Fit the store into chunk 7.** The 512-column build already does. The
+   standard build starts at DF51h, 175 bytes into chunk 6; start it at
+   E000h instead. Keep the first 16 bytes for a header: a magic number
+   ("ZXDK"), a format version and the store's length. The heap follows from
+   E010h.
+2. **Map the page at start**, before the store is used, with interrupts
+   off. Until `tpi:ram alloc` exists, use page 7 of the board: chunk 7 of
+   the first bank, so two `OUT`s are enough. It is in the bottom bank, and
+   the RAM disk grows down from the top.
+
+   ```
+           di
+           ld   a,12h        ; ID
+           out  (0FDh),a
+           in   a,(0FCh)
+           cp   0A5h
+           jr   nz,noboard
+           ld   a,13h        ; IDCOMP
+           out  (0FDh),a
+           in   a,(0FCh)
+           cp   5Ah
+           jr   nz,noboard
+           ld   a,14h        ; BASE: the board's first bank
+           out  (0FDh),a
+           in   a,(0FCh)
+           ld   b,a
+           ld   a,07h        ; OWN7
+           out  (0FDh),a
+           ld   a,b          ; the first bank; this also sets SUB7 = 7
+           out  (0FCh),a
+           ld   a,11h        ; STATUS, for the warnings in step 4
+           out  (0FDh),a
+           in   a,(0FCh)
+   ```
+
+   With no board, carry on as now: the store is in the 2068's own RAM and
+   is lost at power-off.
+3. **Format only if the header is missing.** In place of the format at
+   every start: check the magic number and version, then walk the blocks
+   from E010h and check that their lengths end exactly at FF00h. If either
+   check fails (a new page, or a reset in the middle of a write), ask before
+   formatting, rather than formatting silently.
+4. **Warn on `STATUS`.** Bit 0 set: the write-protect switch is on, writes
+   to the page are dropped, and notes can be read but not saved. Bit 1 set:
+   the battery is low.
+
+**Why chunk 7 is safe for ZXDesk.** Its code, stack, IM 2 table and screens
+all sit below E000h, and its interrupt handler never touches the board, so
+the page is mapped once and left there. The rule that chunk 7 is reserved
+in 64-column mode ([Programming it](#programming-it)) protects the ROM's
+bank code and stack, and ZXDesk uses neither. PicoVideo and the v3 card
+need nothing beyond what [Sharing the bus](#sharing-the-bus) already asks of
+them: PicoVideo watches only chunks 2 and 3, and the v3 card stops serving
+chunk 7 when it sees the `OWN7` write. A reset clears `OWN7` but not the page, and the next start
+maps it again. If a later version returns to BASIC, it writes `OWN7` = 0
+first.
+
+**Testing.** In the emulator model
+([zesarux-tspico](https://github.com/timex-sinclair-projects/zesarux-tspico)):
+save a note, reset, load ZXDesk again and find the note. With the switch
+on, saving warns and changes nothing. On the board, the same across a power
+cycle.
+
+**Later.** More notes than one page holds (a directory across pages, mapped
+through chunk 6 or 7 in turn); fonts, icons and window save-areas in pages,
+which the 512-column build most needs, its code reaching C2xxh; and notes
+exchanged with BASIC as `r:` files, which needs a machine-code entry to the
+RAM disk because ZXDesk doesn't use the ROM (open question 8).
 
 ## Hardware
 
@@ -1135,7 +1241,25 @@ reference for what it changes.
 7. **A name** for the board.
 8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
-   8K? Worth showing them this document.
+   8K? Worth showing them this document. **Partly answered (2026-10-27)** by
+   Jon's ZXDesk, a GUI that takes the machine over ([ZXDesk](#zxdesk)):
+   - **Its first need takes nothing from the ROM:** one 8K page, mapped
+     into chunk 7 at start, holds its notes through power-off. 8K pages
+     suit it.
+   - **It never calls the ROM** once running, so a ROM entry point is no
+     use to it while it runs. Allocation must be something its BASIC loader
+     does before `RANDOMIZE USR` (`SAVE "tpi:ram alloc zxdesk 1"`, say,
+     leaving the page number where `PEEK` or the program can find it), or
+     something the program can read for itself from the superblock, by
+     mapping the RAM disk's top page. The allocation needs a name, so the
+     program finds the same page at every start.
+   - **Until then** it uses page 7 of the board, in the bottom bank.
+     `tpi:ram alloc` must then hand that page to ZXDesk rather than to
+     someone else, or ZXDesk must move its notes when it first sees an
+     allocation.
+   - **Still open:** whether `r:` files from a program that has taken the
+     machine over (notes swapped with BASIC) are worth a machine-code
+     entry to the mover, and that entry's form.
 9. **SYSCON entries for RAM banks.** SYSCON holds at most 10 entries (its
    scratch space at 5FE9h–5FFFh is hard-coded). Nothing validates bank numbers
    against it, so RAM banks may not need entries at all; decide in phase 8.
