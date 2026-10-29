@@ -485,6 +485,38 @@ mapped (the handler at 62AEh). With a nonzero count:
 So the minimal ROM leaves the count at 0, and the Timex API doesn't know the
 board exists. The RAM disk and programs use the registers directly.
 
+### What the ROM needs from SYSCON
+
+SYSCON (5CBCh) points to a table at 5EEAh: the AROS header (8 bytes), the
+LROS header at +8 (4 bytes), then 24-byte bank entries from +0Ch, ended by
+80h. The boot builds it (EXTINIT X08E7, BLDSCT X09F4) and reads it to start
+a cartridge. After the boot, almost every read sits behind a cartridge or a
+banked channel:
+
+- **AROS BASIC** (GETAL, AR_LN, AR_NXT, READ, and CLEAR and RUN resetting
+  DATADD) tests `ARSFLG` bit 7 first.
+- **SELECT** (1265h) and **CLCHAN** (13D8h) read it only for a stream offset
+  with bit 7 set ([What `f:` already settled](#what-f-already-settled)).
+- **SRCHSC** (1374h) has two callers, the banked OPEN at 1488h and `SAVE *`
+  at 24EEh, and nothing reaches either.
+- **The bank API** never reads it.
+
+Three reads don't wait for a cartridge. They test SYSCON+1 for 02 (an AROS)
+on every 2068:
+
+- **FOR** (1CD1h), when the loop runs zero times and searches for its NEXT;
+- **RESTORE** (1EA0h), every time;
+- **USR** (388Eh), every call. If SYSCON+1 is 02 and the address is 8000h or
+  more, it maps the DOCK chunks named at SYSCON+4 before the call.
+
+These HOME addresses are the same in the genuine ROM and the TS-Pico's. So
+for the whole session, not only at boot:
+
+- SYSCON stays 5EEAh, and SYSCON+1 stays 00 unless an AROS is fitted. A
+  stray 02 at 5EEBh would make every RESTORE and USR page the DOCK in.
+- Nothing of ours (the module, the mover, RAM disk buffers) goes in
+  5EEAh–5FFFh. Open question 17 asks whether the TS-Pico plans to.
+
 ### Minimal ROM: detection, reset, mover, `r:` (phase 4)
 
 1. **Replace the bank search.** A `JP` at X0A3E to new code frees the old
@@ -1176,6 +1208,12 @@ reference for what it changes.
     register uses them yet. Note that the v3 card also drives /NMI (its
     button and firmware), so an NMI handler can't tell who raised it unless
     the board says so in a register.
+17. **SYSCON's space and the TS-Pico.** An analysis of Gustavo's ROM
+    describes 5DDDh–633Fh as reserved for future TS-Pico releases. That
+    range takes in SYSCON's table (5EEAh–5FFFh), which FOR, RESTORE and USR
+    read on every 2068 ([What the ROM needs from
+    SYSCON](#what-the-rom-needs-from-syscon)). Ask Gustavo what is planned
+    there.
 
 ## Sources
 
@@ -1200,6 +1238,10 @@ reference for what it changes.
 - tspico-firmware-build: `src/rom/TSPICO-23.ROM`, `ROMs/GENUINE-2068-exrom.bin`,
   `src/tsbus/tsbus.c` and `tsbus.pio` (the v3 card's `serve`, `io_snoop` and
   `io_drive` PIO programs), `docs/reference/rom/`.
+- David's TS2068 reference library: the genuine HOME and EXROM disassemblies
+  (`ts2068_home_rom_U16_stock.txt`, `ts2068_exrom_U20_stock.txt`), and
+  Gustavo Pane's TS-Pico ROMs disassembled (`gus-home.asm`, `gus-exrom.asm`)
+  with an analysis (`gus-rom-analysis.md`), for SYSCON's readers.
 - tspico-hardware (the v3 card): the RP2350B core circuit, the 74LVC bus
   interface, `hardware/scripts/parts.py`, `jlc_price.py` and `gen_fab.py`.
 - JLCPCB's parts catalog, queried with `jlc_price.py` on 2026-10-16 for the
