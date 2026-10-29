@@ -236,7 +236,7 @@ chunk *n*), the first two `OUT`s are enough.
   it, and writes go to the bank. So a bank can never be the screen; a frame
   kept in a bank has to be copied into the SCLD's RAM to be seen. Whether
   Z80 accesses to a bank in chunk 2 or 3 are still contended is open
-  question 17.
+  question 19.
 - **The RAM disk's banks** belong to the RAM disk ([below](#the-ram-disk)).
   Ask the ROM for pages rather than picking bank numbers yourself.
 
@@ -498,6 +498,38 @@ mapped (the handler at 62AEh). With a nonzero count:
 
 So the minimal ROM leaves the count at 0, and the Timex API doesn't know the
 board exists. The RAM disk and programs use the registers directly.
+
+### What the ROM needs from SYSCON
+
+SYSCON (5CBCh) points to a table at 5EEAh: the AROS header (8 bytes), the
+LROS header at +8 (4 bytes), then 24-byte bank entries from +0Ch, ended by
+80h. The boot builds it (EXTINIT X08E7, BLDSCT X09F4) and reads it to start
+a cartridge. After the boot, almost every read sits behind a cartridge or a
+banked channel:
+
+- **AROS BASIC** (GETAL, AR_LN, AR_NXT, READ, and CLEAR and RUN resetting
+  DATADD) tests `ARSFLG` bit 7 first.
+- **SELECT** (1265h) and **CLCHAN** (13D8h) read it only for a stream offset
+  with bit 7 set ([What `f:` already settled](#what-f-already-settled)).
+- **SRCHSC** (1374h) has two callers, the banked OPEN at 1488h and `SAVE *`
+  at 24EEh, and nothing reaches either.
+- **The bank API** never reads it.
+
+Three reads don't wait for a cartridge. They test SYSCON+1 for 02 (an AROS)
+on every 2068:
+
+- **FOR** (1CD1h), when the loop runs zero times and searches for its NEXT;
+- **RESTORE** (1EA0h), every time;
+- **USR** (388Eh), every call. If SYSCON+1 is 02 and the address is 8000h or
+  more, it maps the DOCK chunks named at SYSCON+4 before the call.
+
+These HOME addresses are the same in the genuine ROM and the TS-Pico's. So
+for the whole session, not only at boot:
+
+- SYSCON stays 5EEAh, and SYSCON+1 stays 00 unless an AROS is fitted. A
+  stray 02 at 5EEBh would make every RESTORE and USR page the DOCK in.
+- Nothing of ours (the module, the mover, RAM disk buffers) goes in
+  5EEAh–5FFFh. Open question 17 asks whether the TS-Pico plans to.
 
 ### Minimal ROM: detection, reset, mover, `r:` (phase 4)
 
@@ -1255,7 +1287,20 @@ reference for what it changes.
     register uses them yet. Note that the v3 card also drives /NMI (its
     button and firmware), so an NMI handler can't tell who raised it unless
     the board says so in a register.
-17. **Is a bank in chunk 2 or 3 contended?** The SCLD manages the 2068's
+17. **SYSCON's space and the TS-Pico.** An analysis of Gustavo's ROM
+    describes 5DDDh–633Fh as reserved for future TS-Pico releases. That
+    range takes in SYSCON's table (5EEAh–5FFFh), which FOR, RESTORE and USR
+    read on every 2068 ([What the ROM needs from
+    SYSCON](#what-the-rom-needs-from-syscon)). Ask Gustavo what is planned
+    there. The firmware repo itself shows no such reservation: its ROM uses
+    only 5D37h and 5DCDh–5DDBh in that range.
+18. **Extended RAM for BASIC.** Using the board for BASIC's own program
+    and data, as BASIC XE and BASIC 7.0 did, is explored in
+    [basic-extended-ram.md](basic-extended-ram.md): overlays and page
+    files first, then the program text in banks (EXTEND), sharing the
+    ROM's AROS path with the cartridges that use it. The direction is
+    decided; the design is not.
+19. **Is a bank in chunk 2 or 3 contended?** The SCLD manages the 2068's
     lowest 16K (4000h–7FFFh): Z80 accesses there go through it and are
     slowed while it fetches the picture, and it keeps generating video when
     the Z80 maps something else over those chunks. When the board owns
@@ -1306,6 +1351,10 @@ reference for what it changes.
 - tspico-firmware-build: `src/rom/TSPICO-23.ROM`, `ROMs/GENUINE-2068-exrom.bin`,
   `src/tsbus/tsbus.c` and `tsbus.pio` (the v3 card's `serve`, `io_snoop` and
   `io_drive` PIO programs), `docs/reference/rom/`.
+- David's TS2068 reference library: the genuine HOME and EXROM disassemblies
+  (`ts2068_home_rom_U16_stock.txt`, `ts2068_exrom_U20_stock.txt`), and
+  Gustavo Pane's TS-Pico ROMs disassembled (`gus-home.asm`, `gus-exrom.asm`)
+  with an analysis (`gus-rom-analysis.md`), for SYSCON's readers.
 - tspico-hardware (the v3 card): the RP2350B core circuit, the 74LVC bus
   interface, `hardware/scripts/parts.py`, `jlc_price.py` and `gen_fab.py`.
 - JLCPCB's parts catalog, queried with `jlc_price.py` on 2026-10-16 for the
