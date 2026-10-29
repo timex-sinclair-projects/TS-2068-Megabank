@@ -14,7 +14,7 @@ two things it never had:
   `OPEN #` streams on its files: random-access records from BASIC.
 
 It began with David's question (2026-10-16) whether the TS-Pico could emulate
-the LarKen 256K RAMdisk, and with a 2068 GUI author asking for a RAM disk.
+the LarKen 256K RAMdisk, and with Jon, a 2068 GUI author, asking for a RAM disk.
 Decisions taken with David on 2026-10-16 are marked **(decided)**.
 
 **Paths** like `src/tsbus/tsbus.c` or `src/rom/TSPICO-23.ROM` are in the
@@ -242,9 +242,9 @@ chunk *n*), the first two `OUT`s are enough.
 ## ZXDesk
 
 Jon's 2068 port of ZXDesk, a windowed desktop with notes, files, a clock and
-a calendar, is the first program looked at for the board, and a GUI of the
-kind open question 8 asks about. Its two builds are in [examples/](../examples/), read
-from the binaries (2026-10-27); there is no source here.
+a calendar, is the GUI behind his request for a RAM disk and the first
+program looked at for the board (open question 8). Its two builds are in
+[examples/](../examples/), read from the binaries (2026-10-27); there is no source here.
 
 | Build | Loader | Code | Screen | Stack, IM 2 table | Note store |
 |---|---|---|---|---|---|
@@ -776,7 +776,7 @@ the board).
 
 **Allocating pages for a program**, so programs and files never collide, is
 a `tpi:ram alloc` command that reserves pages below the RAM disk and records
-them in the superblock. Its exact form is for the GUI author to shape (open
+them in the superblock. Its exact form is for Jon, the GUI author, to shape (open
 question 8).
 
 ## Channels (phase 9)
@@ -1004,7 +1004,7 @@ bytes unchanged: whether it should translate text files to PC text, as an
   it should for `f:` (testing).
 - **Data that outlives a program:** a file written by one program and read
   by the next after `NEW` or `LOAD`, without the SD card. This is what the
-  GUI author's settings and save games need (open question 8).
+  settings and save games of Jon's GUI need (open question 8).
 
 ### Coexisting with `f:`
 
@@ -1239,10 +1239,10 @@ reference for what it changes.
    - **The edge fingers' sides:** confirm that side A is the top, as v3
      assumes.
 7. **A name** for the board.
-8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
+8. **What Jon, the GUI author, needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
-   8K? Worth showing them this document. **Partly answered (2026-10-27)** by
-   Jon's ZXDesk, a GUI that takes the machine over ([ZXDesk](#zxdesk)):
+   8K? Worth showing him this document. **Partly answered (2026-10-27)** by
+   his ZXDesk, a GUI that takes the machine over ([ZXDesk](#zxdesk)):
    - **Its first need takes nothing from the ROM:** one 8K page, mapped
      into chunk 7 at start, holds its notes through power-off. 8K pages
      suit it.
