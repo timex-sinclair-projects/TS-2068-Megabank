@@ -1213,7 +1213,14 @@ reference for what it changes.
     range takes in SYSCON's table (5EEAh–5FFFh), which FOR, RESTORE and USR
     read on every 2068 ([What the ROM needs from
     SYSCON](#what-the-rom-needs-from-syscon)). Ask Gustavo what is planned
-    there.
+    there. The firmware repo itself shows no such reservation: its ROM uses
+    only 5D37h and 5DCDh–5DDBh in that range.
+18. **Extended RAM for BASIC.** Using the board for BASIC's own program
+    and data, as BASIC XE and BASIC 7.0 did, is explored in
+    [basic-extended-ram.md](basic-extended-ram.md): overlays and page
+    files first, then the program text in banks (EXTEND), sharing the
+    ROM's AROS path with the cartridges that use it. The direction is
+    decided; the design is not.
 
 ## Sources
 
