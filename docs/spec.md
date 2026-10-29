@@ -42,6 +42,8 @@ those still to be checked on hardware are listed under [Open questions](#open-qu
   on the RAM disk
 - [Firmware](#firmware): the v3 card's part
 - [PicoVideo](#picovideo)
+- [Bus mastering (revision 2)](#bus-mastering-revision-2): what DMA
+  into the 2068's RAM would take; not this board
 - [Testing](#testing)
 - [Phases](#phases)
 - [Open questions](#open-questions)
@@ -228,14 +230,26 @@ chunk *n*), the first two `OUT`s are enough.
 - **Chunk 3 (or chunk 7 in 64-column mode)** holds the 2068's bank-switching
   code and the machine stack. Timex's rules reserve it. Map over it only if you
   know you don't need either.
-- **The screen.** Mapping a bank into chunk 2 (4000h–5FFFh) hides the screen
-  memory from the Z80, not from the display: the 2068 keeps showing its own
-  RAM. Writes there go to the bank.
+- **The screen.** The SCLD draws the picture from its own 16K of RAM
+  (4000h–7FFFh), whatever the Z80 sees there. Mapping a bank into chunk 2 or
+  3 hides that RAM from the Z80, not from the display: the 2068 keeps showing
+  it, and writes go to the bank. So a bank can never be the screen; a frame
+  kept in a bank has to be copied into the SCLD's RAM to be seen. Whether
+  Z80 accesses to a bank in chunk 2 or 3 are still contended is open
+  question 19.
 - **The RAM disk's banks** belong to the RAM disk ([below](#the-ram-disk)).
   Ask the ROM for pages rather than picking bank numbers yourself.
 
 **Speed.** `LDIR` moves a byte in 21 T-states: about 160 KB a second at the
-2068's 3.53 MHz. A 6K screen copies out of a bank in about 40 ms.
+2068's 3.53 MHz. A 6K screen copies out of a bank in about 40 ms, **plus
+contention**: the screen is in the SCLD's 16K (4000h–7FFFh), and every
+access there goes through the SCLD, which stretches the Z80's clock while it
+fetches the picture. Reads from the bank are uncontended; the writes into
+the display file pay. Copy in the border and vertical blank where you can.
+For whole-screen updates in the standard mode, copy into the screen not
+being shown (4000h or 6000h) and flip with bit 0 of port FFh at the frame
+interrupt, keeping its other bits (bit 7 is EXROM/DOCK, bit 6 the frame
+interrupt disable): no tearing. ECM uses both halves, so it cannot flip.
 
 ## Hardware
 
@@ -1001,6 +1015,71 @@ While there: `case 0xF4:` has no `break` and falls into `case HIRES_ADRL`,
 so every `OUT F4h` also overwrites the low byte of the hi-res address. One
 line to fix.
 
+## Bus mastering (revision 2)
+
+Not this board. Jon (TS2068 list, 2026-10-20 and 22) proposes REU-style DMA:
+the board taking the bus with /BUSRQ and writing frames from the banks
+straight into the screen. That is possible through the SCLD's normal path,
+not around it: the master has to make memory cycles the SCLD accepts. This
+records what it would take, so the decision is there when a revision is.
+
+**What the SCLD needs** (from Load ZX's TC2068 model, `rtl/scld.vhd` and
+`rtl/scld_contention.vhd`; the US SCLD to be measured):
+
+- **Z80-shaped cycles on the 2068's clock.** The SCLD latches its DRAM
+  address multiplexer on a rising CPU clock edge after /MREQ falls, and makes
+  the write strobe from /MREQ, /WR and the address. A master holds /MREQ and
+  /WR over the same clock edges as a 3-T Z80 write, and steps on CLK (finger
+  B9), since contention works by stopping that clock.
+- **/BE released.** The SCLD's write strobe needs /BE high: a master writing
+  HOME must not pull it, and the board's own `serve` path, which sees the
+  master's cycles on the bus like any others, must be held off meanwhile.
+- **The free windows.** The SCLD fetches the picture in the first half of
+  each of the 192 picture lines: about 27 µs a line, about 5.3 ms a frame,
+  are free, plus about 4.4 ms of border and blanking. About 58% of a frame.
+- **Refresh.** The Z80 does no refresh while it has given up the bus, and it
+  does not float /RFSH, so a master can't make refresh cycles. Bus holds must
+  stay short: a natural pattern is to hold the bus in the free half of each
+  picture line and give it back in the fetch half, when the Z80 would be
+  contended anyway. A single hold across all of the blanking would pass the
+  DRAM's 4 ms.
+
+**What the board would change:**
+
+| What | This board | Revision 2 |
+|---|---|---|
+| U1/U2, address | Fixed inward, always on | Direction and enable from the controller: in (normal), off (the controller addresses the SRAM privately), out (a master cycle). |
+| A8–A12 | To the SRAM only | Also to the controller, for private SRAM addresses and master cycles: 5 GPIOs, or 2 for a 74LVC573 loaded from SD0–SD7 (the high byte changes every 256 bytes). |
+| /MREQ, /RD, /WR, /IORQ | Inward on U4 | A 74LVC245 of their own, sharing U1/U2's direction and enable. With it off, the controller drives the local /RD and /WR nets, which already feed SRAM /OE and the /WE gate. |
+| U3, data | DIR = bus /RD | DIR = /RD XOR "master" (a 74LVC1G86), since a master write holds /RD high. |
+| /BUSRQ (A23) | Not connected | Out through a third 74LVC1G06, open-drain: 1 GPIO. |
+| /BUSAK (A21), CLK (B9) | Not connected | In, on the U4 channels freed above: 2 GPIOs. |
+| /RFSH | Inward | Unchanged (above). |
+
+**Independent source access** is what makes the private SRAM state needed:
+one address bus can't select a byte in a bank and a different byte in HOME
+at once. The controller reads the source with U1/U2 off, then drives the
+host write.
+
+**Pins are the obstacle.** That is about 10 more GPIOs; the RP2350B has 2
+spare (46 of 48 used). A latch for A8–A12 saves 3, an I²C expander for
+BAT_EN, the write-protect switch and the /NMI output 1 more, dropping the
+/NMI input 1 more (/INT stays: a master needs it for frame sync). Still about
+3 short. So revision 2 probably adds a **second controller**, an RP2350A on
+the board's local buses as the bus master, with the RP2350B keeping the
+memory map. The same chip is where Jon's onboard processing (decoding,
+compositing) would run.
+
+**Other cards** see a master's writes as Z80 writes: PicoVideo mirrors them
+into its display, as wanted. The v3 card must not answer chunks 2–3. Another
+card using /BUSRQ would need arbitration.
+
+**The first test** (Jon's): a few host-clocked writes to HOME outside the
+picture fetch, from a small local buffer, /BE released, watching address,
+data, the DRAM strobes and the buffer directions; then the same during
+contention, checking that the stretched cycle completes. It needs master
+hardware: neither this board nor the v3 card can run bus cycles.
+
 ## Testing
 
 **Before any hardware:**
@@ -1221,6 +1300,29 @@ reference for what it changes.
     files first, then the program text in banks (EXTEND), sharing the
     ROM's AROS path with the cartridges that use it. The direction is
     decided; the design is not.
+19. **Is a bank in chunk 2 or 3 contended?** The SCLD manages the 2068's
+    lowest 16K (4000h–7FFFh): Z80 accesses there go through it and are
+    slowed while it fetches the picture, and it keeps generating video when
+    the Z80 maps something else over those chunks. When the board owns
+    chunk 2 or 3 and pulls /BE, does the SCLD still stretch the clock? That
+    depends on whether its contention logic looks at /BE (its HOME select) or
+    only at A14–A15 and /MREQ. If the latter, the board in chunks 2 and 3
+    runs at contended speed, not "full memory speed". To test: time a loop
+    of reads from a bank in chunk 2 and in chunk 4, during the picture, or
+    watch CLK on a scope. Raised by David (2026-10-20) after Jon's video
+    proposal, which also suggests a use if the answer is "uncontended":
+    PicoVideo could take uploads written into a bank-owned chunk 2 or 3 at
+    full speed (its change under [PicoVideo](#picovideo) would then need a
+    mode that keeps such writes rather than ignoring them).
+    **The TC2068 model says contended (2026-10-22).** In Load ZX's VHDL
+    model of the Portuguese SCLD (`rtl/scld_contention.vhd`), the CPU is
+    held off when A15–A14 = 01 or /IORQ is low, during the first half of
+    each of the 192 picture lines. It looks at neither /BE nor /MREQ (the
+    /MREQ term is commented out). So a bank in chunk 2 or 3 is contended
+    like the 2068's own RAM, and so are I/O cycles during the picture,
+    FCh/FDh included. The model marks its /BE input "TBD", and the US SCLD
+    may differ: the bench test stands, but plan on "contended". The model
+    also has the SCLD strobing the upper 32K's CAS lines, uncontended.
 
 ## Sources
 
@@ -1241,6 +1343,10 @@ reference for what it changes.
   1990, on timexsinclair.com.
 - PicoVideo v4.2, github.com/timex-sinclair-projects/PicoVideo
   (`PICOVID.PLD`, `coreB/busMain.c`).
+- Load ZX Museum, A. Lopes, P. Cortesão, *timex_scld*, a VHDL model of the
+  TC2068's SCLD (CC BY-SA 4.0), github.com/LoadZX/timex_scld
+  (`rtl/scld.vhd`, `rtl/scld_contention.vhd`); links from Jon on the TS2068
+  list, 2026-10-22.
 - TS2068_Extender v2.1, github.com/timex-sinclair-projects/TS2068_Extender.
 - tspico-firmware-build: `src/rom/TSPICO-23.ROM`, `ROMs/GENUINE-2068-exrom.bin`,
   `src/tsbus/tsbus.c` and `tsbus.pio` (the v3 card's `serve`, `io_snoop` and
