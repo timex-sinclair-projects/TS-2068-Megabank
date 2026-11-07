@@ -100,7 +100,7 @@ def main():
         f.write("- `jlcpcb/megabank-bom.csv`, `jlcpcb/megabank-cpl.csv`: JLCPCB assembly BOM and placement (top side; all mm, KiCad rotations).\n")
         f.write(f"- Not in the BOM/CPL (not assembled): {', '.join(sorted(skipped))}.\n")
         f.write("- BOM lines with no LCSC number (pick at upload): " + ("; ".join(f"{c} ({r})" for c, r in missing) or "none") + ".\n")
-        f.write("- L1 (Abracon AOTA-B201610S3R3-101-T, the RP2350 core-regulator inductor) is polarised: the dot goes on pad 2 (net DVDD, marked by the silkscreen dot). Get it placed through JLCPCB's parts pre-order or Global Sourcing; if neither works, mark it DNP and fit it by hand. The RP2350B's core has no supply until L1 is on.\n")
+        f.write("- U23 (ME6211C12, SOT-23-5) supplies the RP2350B core (DVDD, 1.2 V); the chip's own switcher is unused (no inductor). Pin 1 is VIN: check its dot in the placement preview.\n")
         f.write("- DNP (footprint only): R3 (/BE pull-up, open question 13). R13/R14 are fitted for the CY62167EV30; leave them off for a DV30 build.\n")
         f.write("- All drills are 0.3 mm or larger; all vias 0.6/0.3 mm.\n")
         f.write("- Check rotations in JLCPCB's placement preview: JLC's part orientation differs from KiCad's for many footprints (QFN, SOT-223, SOIC, connectors); fix there, not here.\n")
