@@ -1143,6 +1143,11 @@ While there: `case 0xF4:` has no `break` and falls into `case HIRES_ADRL`,
 so every `OUT F4h` also overwrites the low byte of the hi-res address. One
 line to fix.
 
+**Exploration:** PicoVideo folded into this card as a second RP2350B, with
+DVI/HDMI out of its HSTX, the AY in the HDMI audio, and a private path to
+the SRAM for Jon's accelerated video:
+[picovideo-merge.md](picovideo-merge.md).
+
 ## Bus mastering (revision 2)
 
 Not this board. Jon (TS2068 list, 2026-10-20 and 22) proposes REU-style DMA:
