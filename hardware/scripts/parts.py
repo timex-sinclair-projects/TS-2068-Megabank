@@ -35,12 +35,12 @@ PARTS = {
     ("74LVC2G34", "SOT-363_SC-70-6"): ("SN74LVC2G34DCKR", "C14461", "extended, TI, SC-70-6; 21,890 in stock 2026-10-19"),
     ("SN74LVC1G32DBVR", "SOT-23-5"): ("SN74LVC1G32DBVR", "C10096", "extended, TI"),
     ("TLV1117LV33", "SOT-223-3_TabPin2"): ("TLV1117LV33DCYR", "C15578", "extended, TI, as v3"),
+    ("ME6211C12M5G-N", "SOT-23-5"): ("ME6211C12M5G-N", "C236672", "Microne, 1.2 V LDO for DVDD in place of the RP2350's switcher and its Abracon inductor (as on the OpenSpand card)"),
     ("TPS3839G33", "SOT-23"): ("TPS3839G33DBZR", "C485802", "extended, TI, 3.08 V, push-pull active low"),
     ("LM66200", "SOT-583-8"): ("LM66200DRLR", "C3235556", "extended, TI"),
     ("AO3401A", "SOT-23"): ("AO3401A", "C15127", "basic"),
     ("AO3400A", "SOT-23"): ("AO3400A", "C20917", "basic"),
     ("SS34", "D_SMA"): ("SS34", "C8678", "basic, MDD"),
-    ("3.3uH", "L_Abracon_AOTA-B201610"): ("AOTA-B201610S3R3-101-T", "C42411119", "extended, Abracon polarised inductor from the RP2350 design guide; dot = pin 2 = DVDD side. 3 at JLCPCB on 2026-10-18: pre-order, Global Sourcing, or DNP and hand-fit (spec, Parts)"),
     ("12MHz", "Crystal_SMD_3225-4Pin_3.2x2.5mm"): ("ABM8-272-T3", "C20625731", "extended, Abracon, CL 10 pF, as v3"),
     # ---- electromechanical ---------------------------------------------------
     ("USB-C", "USB_C_Receptacle_HRO_TYPE-C-31-M-12"): ("TYPE-C-31-M-12", "C165948", "extended, HRO, as v3"),

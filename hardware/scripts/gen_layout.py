@@ -61,17 +61,22 @@ P["U7"], P["C7"] = (51.5, 48.0, 0), (51.5, 51.5, 0)
 P["U6"], P["C6"] = (56.5, 48.0, 0), (56.5, 51.5, 0)
 P["R4"] = (56.5, 45.2, 0)
 
-# ---- RP2350B core: v3's placement, unchanged, so preroute.py carries over -----------
+# ---- RP2350B core: v3's placement, so preroute.py's crystal and fan-out carry over ---
 # Rotated so GPIO0-7 (here the SD bus) sit at the bottom-left corner, the control GPIOs
-# along the bottom, QSPI/USB/regulator on the left, crystal on the right.
+# along the bottom, QSPI/USB/regulator pins on the left, crystal on the right.
 P["U20"] = (62, 26, 90)
-P["C22"], P["C20"], P["L1"] = (55.25, 22.8, 90), (54.05, 22.8, 90), (52.25, 22.8, 270)
+P["C22"] = (55.25, 22.8, 90)                  # VREG_VIN; v3's L1 and C20 beside it are gone
+# Core supply: U23, a 1.2 V LDO, above DVDD pin 51 (the only DVDD pin a track can reach from
+# outside the pad ring, now that VREG_FB is grounded); its output runs straight down to pin 51,
+# past C21, and the spine under the package carries DVDD on to pins 10 and 32. Pins 4/5 face
+# the chip. C40 at its input, C20 (4.7 uF) at its output.
+P["U23"], P["C40"], P["C20"] = (60.55, 14.6, 270), (60.55, 11.4, 180), (60.4, 17.3, 180)
 P["C39"], P["R28"] = (55.1, 21.2, 180), (55.6, 19.2, 270)
 P["Y1"], P["R20"], P["C35"], P["C36"] = (75.5, 26.0, 0), (71.7, 25.2, 0), (74.4, 29.3, 270), (76.6, 22.7, 90)
 P["C23"], P["C24"] = (51.2, 26.4, 0), (51.2, 29.4, 0)
 P["C25"], P["C48"], P["C26"] = (57.6, 37.0, 270), (61.35, 37.0, 270), (66.0, 37.0, 270)
 P["C28"], P["C29"], P["C47"] = (69.4, 30.6, 0), (72.6, 33.0, 0), (70.6, 19.8, 0)
-P["C27"], P["C30"], P["C21"], P["C31"] = (67.4, 17.4, 90), (64.2, 14.0, 0), (62.3, 18.2, 90), (57.4, 16.4, 0)
+P["C27"], P["C30"], P["C21"], P["C31"] = (67.4, 17.4, 90), (64.2, 14.0, 0), (62.3, 18.2, 90), (57.3, 16.4, 0)
 P["U21"], P["C37"], P["R21"] = (44, 20, 0), (38, 20, 90), (38, 25, 0)
 P["R27"], P["R26"] = (47.6, 23.7, 0), (47.6, 26.3, 0)
 P["J1"] = (3.2, 21, 270)                      # USB-C on the left edge, as v3
@@ -80,6 +85,9 @@ P["R24"], P["R25"] = (12, 21, 0), (15, 21, 0)
 P["SW3"], P["SW4"] = (72.4, 4, 0), (85.1, 4, 0)
 P["R22"], P["R23"] = (72, 9.5, 0), (78.5, 9.5, 0)
 P["TP1"], P["TP2"], P["TP3"] = (40, 30.5, 0), (40, 33.5, 0), (40, 36.5, 0)
+# spare GPIO46/47 (pins 57/58, top left of the chip) on pads for bench experiments, labelled on silk
+P["TP4"], P["TP5"] = (53.5, 13.5, 0), (53.5, 16.0, 0)
+SILK_LABELS = {"TP4": "GP46", "TP5": "GP47"}
 
 # ---- SRAM: two TSOP I 48 on the right, leads top and bottom -------------------------
 P["U10"], P["U11"] = (101, 19.5, 90), (116.5, 19.5, 90)
@@ -192,6 +200,12 @@ def main():
             print("unplaced (parked):", ref)
         fp.SetPosition(mm(x, y))
         fp.SetOrientationDegrees(rot)
+        if ref in SILK_LABELS:                 # a footprint text, so silk.py keeps designators off it
+            t = pcbnew.PCB_TEXT(fp)
+            t.SetText(SILK_LABELS[ref]); t.SetLayer(pcbnew.F_SilkS)
+            t.SetTextSize(pcbnew.VECTOR2I(pcbnew.FromMM(0.8), pcbnew.FromMM(0.8))); t.SetTextThickness(pcbnew.FromMM(0.15))
+            t.SetPosition(mm(x - 2.6, y))
+            fp.Add(t)
         board.Add(fp)
         fps[ref] = fp
 

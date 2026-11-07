@@ -2,11 +2,14 @@
 """Generate mcu.kicad_sch: the RP2350B controller.
 
 The core circuit is v3's mcu sheet (tspico-hardware, scripts/gen_mcu.py), copied with
-its reference designators so that v3's placement and pre-routes (regulator, crystal,
-QFN fan-out) carry over: U20 RP2350B, L1/C20/C22 core regulator, R28/C39 AVDD filter,
-Y1/R20/C35/C36 crystal, C21/C23-C31/C47/C48 decoupling, U21 QSPI flash, J1 USB-C
-(data, VBUS to the power sheet), SW3 RUN, SW4 BOOTSEL, TP1-TP3 SWD pads.
-Dropped from v3: the PSRAM (U22, C38). Added: SW5, the write-protect switch.
+its reference designators so that v3's placement and pre-routes (crystal, QFN fan-out)
+carry over: U20 RP2350B, C22 at VREG_VIN, R28/C39 AVDD filter, Y1/R20/C35/C36 crystal,
+C21/C23-C31/C47/C48 decoupling, U21 QSPI flash, J1 USB-C (data, VBUS to the power sheet),
+SW3 RUN, SW4 BOOTSEL, TP1-TP3 SWD pads.
+Dropped from v3: the PSRAM (U22, C38) and the core regulator's inductor L1. Added: SW5,
+the write-protect switch; U23, an ME6211C12 LDO that supplies DVDD at 1.2 V in place of
+the on-chip switcher (RP2350 datasheet 6.3.7; as on the OpenSpand card), with C40 at its
+input and C20 at its output; TP4/TP5 on the spare GPIO46/47, for bench experiments.
 
 GPIO map (docs/spec.md "Pins"). PIO windows: a state machine sees 32 pins, from GPIO0
 or GPIO16, so everything both programs need sits in GPIO16-31:
@@ -26,7 +29,7 @@ or GPIO16, so everything both programs need sits in GPIO16-31:
   GPIO43     nINT_L        /INT, through U7                                window 16
   GPIO44     nNMI_L        /NMI, through U7                                window 16
   GPIO45     NMI_REQ       to U6 -> /NMI (R4 pull-down)                    window 16
-  GPIO46-47  spare
+  GPIO46-47  GP46, GP47    spare, to test pads TP4/TP5 (bench experiments)
 """
 import os
 import sys
@@ -36,7 +39,7 @@ from schlib import Sheet  # noqa: E402
 
 R0603 = "Resistor_SMD:R_0603_1608Metric"
 C0603 = "Capacitor_SMD:C_0603_1608Metric"
-L_FP = "megabank:L_Abracon_AOTA-B201610"
+SOT23_5 = "Package_TO_SOT_SMD:SOT-23-5"
 C0402 = "Capacitor_SMD:C_0402_1005Metric"
 SW_FP = "Button_Switch_SMD:SW_Push_1P1T_XKB_TS-1187A"
 SLIDE_FP = "Button_Switch_SMD:SW_SPDT_Shouhan_MSK12C02"
@@ -56,12 +59,13 @@ GPIO = {
     38: ("WINH", OUT), 39: ("nWP", IN), 40: ("BAT_ADC", BI), 41: ("BAT_EN", OUT), 42: ("nBE_L", IN),
     43: ("nINT_L", IN), 44: ("nNMI_L", IN), 45: ("NMI_REQ", OUT),
 }
-SPARE = [g for g in range(48) if g not in GPIO]
+TEST = {46: "GP46", 47: "GP47"}          # spare, brought out to TP4/TP5
+SPARE = [g for g in range(48) if g not in GPIO and g not in TEST]
 
 
 def main():
     s = Sheet("megabank.kicad_sch", "mcu.kicad_sch", "Megabank: RP2350B Controller")
-    s.text("RP2350B core per the RP2350 hardware design guide, as on v3. The controller is the memory map, not the data path: bytes go SRAM <-> U3 <-> bus.", 20, 285, 2.5)
+    s.text("RP2350B core per the RP2350 hardware design guide, as on v3, but DVDD from an LDO (U23). The controller is the memory map, not the data path: bytes go SRAM <-> U3 <-> bus.", 20, 285, 2.5)
     s.text("GPIO map in scripts/gen_mcu.py. USB-C: firmware and settings (BASE, SIZE); VBUS to the power sheet so the board runs from USB on the bench.", 20, 290, 2.0)
 
     s.power("+3V3", 300, 30, "#PWR05", flag=False)
@@ -75,6 +79,8 @@ def main():
         by_name.setdefault(nm.split("/")[0], num)
     for g, (net, shape) in GPIO.items():
         s.glabel(net, U.pin(by_name[f"GPIO{g}"]), shape)
+    for g, net in TEST.items():
+        s.label(net, U.pin(by_name[f"GPIO{g}"]))
     for g in SPARE:
         s.nc(U.pin(by_name[f"GPIO{g}"]))
     for num, nm in names.items():
@@ -86,8 +92,8 @@ def main():
             s.label("GND", U.pin(num))
         elif nm == "DVDD":
             s.label("DVDD", U.pin(num))
-    s.label("VREG_LX", U.pin(by_name["VREG_LX"]))
-    s.label("DVDD", U.pin(by_name["VREG_FB"]))
+    s.nc(U.pin(by_name["VREG_LX"]))                 # on-chip switcher unused: no inductor
+    s.label("GND", U.pin(by_name["VREG_FB"]))       # datasheet 6.3.7: FB to ground when DVDD comes from outside
     s.label("XIN", U.pin(by_name["XIN"])); s.label("XOUT", U.pin(by_name["XOUT"]))
     s.label("SWCLK", U.pin(by_name["SWCLK"])); s.label("SWDIO", U.pin(by_name["SWDIO"]))
     s.label("RUN", U.pin(by_name["RUN"]))
@@ -96,15 +102,18 @@ def main():
         s.label(nm, U.pin(by_name[nm]))
     s.label("nQSPI_SS", U.pin(by_name["~{QSPI_SS}"]))
 
-    # ---- core regulator: VREG_LX -> L1 -> DVDD, 4.7 uF x2, 4.7 uF on VREG_VIN --------
-    # Fitted by JLCPCB (parts pre-order or Global Sourcing) per the spec; if neither comes through,
-    # set dnp=True and fit it by hand, as v3 proto2 did. Polarised: dot on pad 2, DVDD.
-    L1 = s.place("Device:L", "L1", "3.3uH", L_FP, 250, 60)
-    s.label("VREG_LX", L1.pin("1")); s.label("DVDD", L1.pin("2"))   # LCSC numbering: dot-marked terminal = pad 2 = DVDD (1.1 V) side
-    for k, (ref, net, val, fp) in enumerate([("C20", "DVDD", "4.7u", C0402), ("C22", "+3V3", "4.7u", C0402), ("C21", "DVDD", "100n", C0603), ("C47", "DVDD", "100n", C0603), ("C48", "DVDD", "100n", C0603)]):
+    # ---- core supply: ME6211C12 LDO (U23) -> DVDD 1.2 V, in place of the on-chip switcher ----------
+    # The switcher's inductor (Abracon AOTA-B201610, L1 on v3) is the scarcest part on the board, so
+    # DVDD comes from a fixed 1.2 V LDO, as on the OpenSpand card. VREG_VIN (C22) and VREG_AVDD (R28/C39)
+    # stay powered: the chip's power-on reset runs from them. Firmware may put the regulator in HIZ.
+    LDO = s.place("Regulator_Linear:ME6211C12M5", "U23", "ME6211C12M5G-N", SOT23_5, 250, 60)
+    s.label("+3V3", LDO.pin("1")); s.label("GND", LDO.pin("2")); s.label("+3V3", LDO.pin("3"))
+    s.nc(LDO.pin("4")); s.label("DVDD", LDO.pin("5"))
+    for k, (ref, net, val, fp) in enumerate([("C40", "+3V3", "1u", C0603), ("C20", "DVDD", "4.7u", C0402), ("C22", "+3V3", "4.7u", C0402), ("C21", "DVDD", "100n", C0603), ("C47", "DVDD", "100n", C0603), ("C48", "DVDD", "100n", C0603)]):
         C = s.place("Device:C", ref, val, fp, 265 + 10 * k, 60)
         s.label(net, C.pin("1")); s.label("GND", C.pin("2"))
-    s.text("L1 (Abracon AOTA-B201610S3R3-101-T, polarised: dot = pad 2 to DVDD), C20 output, C22 at VREG_VIN (0402 as in the design guide). C21/C47/C48: 100 nF at DVDD pins 51, 32, 10.", 245, 75, 1.5)
+    s.text("U23 ME6211C12M5G-N: DVDD 1.2 V (v3 runs the core at 1.2 V for 250 MHz). C40 1 uF in, C20 4.7 uF out. VREG_LX open, VREG_FB to GND.", 245, 75, 1.5)
+    s.text("C22 at VREG_VIN (0402 as in the design guide). C21/C47/C48: 100 nF at DVDD pins 51, 32, 10.", 245, 78, 1.5)
     R28 = s.place("Device:R", "R28", "33", R0603, 300, 85)
     s.label("+3V3", R28.pin("1")); s.label("VREG_AVDD", R28.pin("2"))
     C39 = s.place("Device:C", "C39", "4.7u", C0402, 315, 85)
@@ -112,8 +121,6 @@ def main():
     s.text("R28/C39: 33 R + 4.7 uF filter on VREG_AVDD (design guide R3/C9).", 245, 95, 1.5)
     FL2 = s.place("power:PWR_FLAG", "#FLG08", "PWR_FLAG", "", 330, 85)
     s.label("VREG_AVDD", FL2.pin("1"))
-    FL = s.place("power:PWR_FLAG", "#FLG06", "PWR_FLAG", "", 300, 60)
-    s.label("DVDD", FL.pin("1"))
 
     # ---- IOVDD and analog decoupling: 12 x 100 nF ----------------------------------
     for k in range(9):
@@ -184,6 +191,10 @@ def main():
         T = s.place("Connector:TestPoint", ref, net, TP_FP, 40 + 15 * k, 250)
         s.label(net, T.pin("1"))
     s.text("TP1-TP3: SWD debug pads.", 30, 262, 1.5)
+    for k, (ref, net) in enumerate([("TP4", "GP46"), ("TP5", "GP47")]):
+        T = s.place("Connector:TestPoint", ref, net, TP_FP, 100 + 15 * k, 250)
+        s.label(net, T.pin("1"))
+    s.text("TP4/TP5: spare GPIO46/47, for bench experiments (a second controller's handshake).", 90, 262, 1.5)
 
     s.write()
     print("wrote mcu.kicad_sch")

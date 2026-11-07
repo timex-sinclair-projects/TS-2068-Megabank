@@ -1,22 +1,24 @@
 # Megabank KiCad project
 
-Status 2026-10-19: **routed, DRC clean at every severity** (no errors, no warnings,
+Status 2026-11-07: **routed, DRC clean at every severity** (no errors, no warnings,
 nothing unconnected), not yet ordered. The board has the TS-Pico v3's form factor
 and is built with v3's script pipeline (tspico-hardware, `hardware/scripts/`),
 copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
 
 - **Schematic:** four sheets, generated. ERC: one warning, expected (below).
 - **Board:** outline, gold fingers and mounting holes are v3's. Routed by
-  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 2107 track
-  segments (1455 top, 652 bottom), 357 vias, all 0.6/0.3 mm, narrowest track
-  0.13 mm, nothing on the plane layers. Closed on the second attempt (re-routed
-  2026-10-19 for /INT and /NMI, spec open question 16). Silkscreen: 86 of 87
-  designators placed; C39 is hidden, as on v3.
+  `scripts/flow.py` with Freerouting 2.4.1 and no hand edits: 1945 track
+  segments (1315 top, 630 bottom), 355 vias, all 0.6/0.3 mm, narrowest track
+  0.11 mm, nothing on the plane layers. Closed on the first attempt (re-routed
+  2026-11-07 for the core LDO, which replaced the RP2350B's switcher and L1,
+  and the GPIO46/47 test pads). Silkscreen: all 90 designators placed.
 - **Fab files:** `python3 scripts/gen_fab.py` writes the Gerbers, BOM and CPL
   to `fab/jlcpcb/` (ignored by git); `fab/NOTES.md` lists what to check on upload.
-- **Parts:** every fitted part has an LCSC number. About $25-27 a board in parts
-  at 10 boards, plus about $45 in extended-part fees once (the 74LVC2G34 added one); the two SRAMs are
-  $19.46 of it.
+- **Parts:** every fitted part has an LCSC number. $26.41 a board in parts at
+  10 boards (`jlc_price.py`, 2026-11-07; it counts U1-U4 once, so about $27),
+  plus $45 in extended-part fees once; the two SRAMs are $20.86 of it. The
+  ME6211C12 LDO (32,146 in stock) is an extended part like the L1 it replaced,
+  so the fees are unchanged.
 
 ## Form factor
 
@@ -41,7 +43,7 @@ The finger geometry and the side-A-is-top assumption are v3's; see v3's
 | `megabank.kicad_sch` | by hand | Root: four sheets, flat, global labels |
 | `interface.kicad_sch` | `gen_interface.py` | P1 fingers; U1/U2 address buffers (always on: BA0-BA15), U3 data buffer (DIR = /RD, /OE = nDOE), U4 control buffer; U5 74LVC1G06 /BE driver; U6 74LVC1G06 /NMI driver; U7 74LVC2G34 /INT and /NMI in; pulls R1-R4 |
 | `memory.kicad_sch` | `gen_memory.py` | U10/U11 CY62167EV30 as 2M x 8; U12 /WE gate; ~CE1 pull-downs, WINH pull-up, BHE/BLE links |
-| `mcu.kicad_sch` | `gen_mcu.py` | v3's RP2350B core, same designators; USB-C; RUN, BOOTSEL; SW5 write protect; the GPIO map |
+| `mcu.kicad_sch` | `gen_mcu.py` | v3's RP2350B core, same designators, but DVDD from U23, a 1.2 V LDO (no L1); USB-C; RUN, BOOTSEL; SW5 write protect; TP4/TP5 on the spare GPIOs; the GPIO map |
 | `power.kicad_sch` | `gen_power.py` | +5V diode-OR (edge, USB), TLV1117LV33, TPS3839 -> CE2, LM66200 -> VSRAM, CR2032, battery monitor |
 
 `gen_symbols.py` writes `lib/megabank.kicad_sym`: the edge connector (v3's),
@@ -73,7 +75,7 @@ strobes, /BE, the ~CE1s and the page bits. Everything both need sits in 16-31:
 | 43 | nINT_L | /INT, through U7 |
 | 44 | nNMI_L | /NMI, through U7 |
 | 45 | NMI_REQ | to U6, pulled down (R4) |
-| 46-47 | spare | |
+| 46-47 | GP46, GP47 | spare, on test pads TP4, TP5 (silk "GP46", "GP47") for bench experiments |
 
 ### Decisions taken here, beyond the spec
 
@@ -84,8 +86,18 @@ strobes, /BE, the ~CE1s and the page bits. Everything both need sits in 16-31:
   timing on the bench and to see v3 serve a chunk.
 - **R3, a /BE pull-up to +5V_EDGE, DNP** (open question 13): the bus already has
   v3's 2k2; the pad is there if the prototype shows /BE rising too slowly.
-- **L1 fitted** (JLCPCB pre-order or Global Sourcing), per the spec; set
-  `dnp=True` in `gen_mcu.py` to hand-fit it instead.
+- **An LDO for the core, not the on-chip switcher** (2026-11-07): U23, an
+  ME6211C12M5G-N (SOT-23-5, C236672), supplies DVDD at 1.2 V, as on the
+  OpenSpand card. The switcher's inductor (v3's L1, Abracon
+  AOTA-B201610S3R3-101-T) was the scarcest part on the board (3 at JLCPCB in
+  October) and needed a pre-order or hand fitting. VREG_LX is open, VREG_FB is
+  grounded, VREG_VIN (C22) and VREG_AVDD (R28/C39) stay powered (RP2350
+  datasheet 6.3.7). 1.2 V is what v3's firmware sets for 250 MHz; the firmware
+  may put the unused regulator in HIZ to save about 400 µA. C40 (1 µF) at the
+  LDO's input, C20 (4.7 µF) at its output; C21/C47/C48 stay at DVDD pins 51,
+  32 and 10.
+- **Test pads on the spare GPIOs:** TP4 (GPIO46) and TP5 (GPIO47), for bench
+  experiments such as a second controller's handshake (spec, Bus mastering).
 - **One 0 R each for BHE and BLE** (R13, R14), shared by both chips.
 - **Battery-monitor designators** are R51-R54, C55 (the spec's R1-R4, C1).
 - **SRAM pins may be swapped at layout:** any permutation of A0-A20 or of
@@ -107,7 +119,16 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
   U6 and R4 (x 56.5).
   Low address U1 above U2.
 - **RP2350B cluster** at v3's coordinates with v3's designators (U20 at
-  (62, 26), 90°), so v3's pre-routes carry over. Flash U21 to its left.
+  (62, 26), 90°), so v3's crystal and fan-out pre-routes carry over. Flash U21
+  to its left.
+- **Core supply:** with VREG_FB grounded, pin 51 is the only DVDD pin a track
+  can reach from outside the pad ring (on v3 the switcher's output came in
+  through FB). So the LDO U23 sits above pin 51, at (60.55, 14.6), pins 4/5
+  towards the chip: its output runs straight down to pin 51, 0.3 mm wide,
+  past C21, with C20 off its side, and v3's DVDD spine under the package
+  carries it on to pins 10 and 32. C40 above U23; plane vias for its input
+  and ground. FB goes to a GND via where L1 was. TP4/TP5 at (53.5, 13.5) and
+  (53.5, 16), up and left of the chip's GPIO46/47 pins.
   One pre-route changed: on v3, supply pin 29 dropped into the lanes of pads 27
   and 28 to reach its via, because those GPIOs (26, 27) were spare. Here they
   are nDOE and BE_REQ, and the first run left both sealed in on all three
@@ -132,7 +153,7 @@ Coordinates in mm from the body's top-left corner (`gen_layout.py`, table `P`).
    time with the 2068 on. Harmless to the data; it costs battery life. Measure on
    the prototype (spec, hardware test 3); a Schottky in series with the cell
    would settle it if needed.
-3. **Stock:** 42 CY62167EV30 at JLCPCB on 2026-10-18, enough for 20 boards.
+3. **Stock:** 42 CY62167EV30 at JLCPCB on 2026-10-18, 40 on 2026-11-07, enough for 20 boards.
 
 ## Routing
 
