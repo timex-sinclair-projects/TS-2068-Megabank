@@ -14,7 +14,7 @@ two things it never had:
   `OPEN #` streams on its files: random-access records from BASIC.
 
 It began with David's question (2026-10-16) whether the TS-Pico could emulate
-the LarKen 256K RAMdisk, and with a 2068 GUI author asking for a RAM disk.
+the LarKen 256K RAMdisk, and with Jon, a 2068 GUI author, asking for a RAM disk.
 Decisions taken with David on 2026-10-16 are marked **(decided)**.
 
 **Paths** like `src/tsbus/tsbus.c` or `src/rom/TSPICO-23.ROM` are in the
@@ -33,6 +33,8 @@ those still to be checked on hardware are listed under [Open questions](#open-qu
 - [The board](#the-board): what it does on the bus
 - [Registers](#registers): ports FCh/FDh
 - [Programming it](#programming-it): for people writing 2068 software
+- [ZXDesk](#zxdesk): Jon's port of a GUI desktop, and a storage backend
+  for it on the board
 - [Hardware](#hardware): the RP2350B controller, parts for JLCPCB
   assembly, battery backup, timing
 - [Sharing the bus](#sharing-the-bus): the v3 card, PicoVideo, BUSISO
@@ -250,6 +252,132 @@ For whole-screen updates in the standard mode, copy into the screen not
 being shown (4000h or 6000h) and flip with bit 0 of port FFh at the frame
 interrupt, keeping its other bits (bit 7 is EXROM/DOCK, bit 6 the frame
 interrupt disable): no tearing. ECM uses both halves, so it cannot flip.
+
+## ZXDesk
+
+ZXDesk is a windowed desktop for the Spectrum 48K by
+[mindbox77](https://github.com/mindbox77/zxdesk): overlapping windows,
+menus, a notepad, a clock, a calendar, settings and a two-pane file manager
+(Commander). Jon, the GUI author behind the RAM disk request, has ported it
+to the 2068: source at
+[jon0x0/ts2068, ZXDesk2068](https://github.com/jon0x0/ts2068/tree/main/ZXDesk2068)
+(read at `30c5d64`, 2026-10-29), with its README, roadmap and a TS-Pico
+handoff. Its two builds are copied into [examples/](../examples/):
+
+| Build | Loader | Screen | Code | Stack, IM 2 table | Files, buffers, heap |
+|---|---|---|---|---|---|
+| `zxdesk2068.tap` | `CLEAR 27647`, `RANDOMIZE USR 33280` | 256 × 192 | 6C00h–B542h | BD00h, BE00h | C000h–FEFFh |
+| `zxdesk2068-512.tap` | `CLEAR 30719`, `RANDOMIZE USR 36352` | 512 × 192 | 7800h–C046h | C300h, C400h | C600h–FEFFh |
+
+**How it runs.** It takes the machine over: all chunks HOME (F4h = 0),
+its own IM 2 handler, no ROM calls, and no return to BASIC. It reads the
+keyboard and both joysticks through the 2068's AY (Kempston mouse detection
+is disabled in these builds) and beeps through FEh.
+
+**How it stores files.** Through a registry of storage backends, each six
+vectors (`StOpen`, `StClose`, `StRead`, `StWrite`, `StDir`, `StDelete`) plus
+capability bits (write, persist, random access, directory). The 2068 build
+registers one: RAM, four files of 256 bytes, lost at reset. The Spectrum
+builds add tape, esxDOS, a printer, and **a Spectrum 128K RAM disk**
+(`src/bank.inc`): a directory in one bank and eight files of 8K, paged in
+at C000h through port 7FFDh and copied through a 256-byte staging buffer in
+the code region.
+
+**With the board fitted, today: no change.** The board starts with nothing
+mapped and ZXDesk never touches FCh or FDh. One thing for Jon: the 2068
+build still carries the Spectrum 128's AY routine, writing FFFDh and BFFDh.
+The board decodes A7–A0 only, so both writes would land on FDh and change
+the selected register (harmless: only a write to FCh changes the mapping).
+The flag that selects that routine is cleared at start and never set on the
+2068, so the beeper is used instead. Better to remove it than rely on that.
+
+### A Megabank storage backend
+
+The board's first use for ZXDesk: a backend, `ST_MEGABANK`, that keeps
+files in battery-backed pages. It is the 128K backend with the paging
+changed, and the board is a better fit for it than the 128K: an 8K page is
+exactly one 128K file, and any page goes into any chunk with `OUT`s the
+Z80 makes itself. (Jon's roadmap finds the TS-Pico's DOCK RAM harder to
+use: one 64K bank at a time, each 8K only at its own address, and the bank
+chosen by a firmware command whose timing is unmeasured.) The work is
+Jon's:
+
+1. **The layout.** Until `tpi:ram alloc` exists, use the board's first
+   bank, pages 0–7 of the board: page 0 the directory, pages 1–7 seven
+   files of 8K. The RAM disk grows down from the top of the board, so the
+   bottom bank is the last it reaches. The directory page starts with a
+   header: a magic number ("ZXDK"), a format version and the file count.
+2. **A window in chunk 7.** For each directory access or transfer, map the
+   page at E000h, copy through the staging buffer, and unmap, as the 128K
+   backend does at C000h with 7FFDh. Chunk 7 holds only buffers and heap in
+   both builds, never the code, the stack or the IM 2 table, and the
+   interrupt handler touches nothing there. (Not chunk 6: in the 512-column
+   build it holds the end of the code, the stack and the IM 2 table.) The
+   rule reserving chunk 7 in 64-column mode
+   ([Programming it](#programming-it)) protects the ROM's bank code and
+   stack, which ZXDesk doesn't use. As with 7FFDh, a page can't be mapped
+   while the caller's buffer is in the chunk it covers; the staging buffer
+   is what makes that safe.
+
+   ```
+   ; Map page A (0-7) of the board's first bank at E000h.
+   ; MbBase holds BASE, read once at start-up.
+   MbPage:
+           push bc
+           ld   c,a
+           ld   a,07h        ; OWN7
+           out  (0FDh),a
+           ld   a,(MbBase)   ; the first bank; this also sets SUB7 = 7
+           out  (0FCh),a
+           ld   a,0Fh        ; SUB7
+           out  (0FDh),a
+           ld   a,c          ; the page
+           out  (0FCh),a
+           pop  bc
+           ret
+
+   ; Give chunk 7 back to HOME.
+   MbHome:
+           ld   a,07h        ; OWN7
+           out  (0FDh),a
+           xor  a
+           out  (0FCh),a
+           ret
+   ```
+
+   ZXDesk's interrupt handler never touches the board, so the `OUT` pairs
+   need no `DI`.
+3. **Detect, then register.** At start, check `ID` (12h) for A5h and
+   `IDCOMP` (13h) for 5Ah, read `BASE` (14h) into `MbBase`, and register
+   the backend only if the board answers. With no board, ZXDesk is as it
+   is now.
+4. **Format only if the header is missing.** The 128K backend clears its
+   directory at every start, since a 128K's RAM holds nothing worth
+   keeping at power-on. Here the directory is the point: check the header
+   and keep it if it is good. If not (a new board, or a reset in the
+   middle of a directory write), ask before formatting.
+5. **Read `STATUS` (11h) at start.** Bit 0 set: the write-protect switch is
+   on, so register the backend without `STCAP_WRITE`. Bit 1 set: the
+   battery is low; say so. Otherwise the capabilities are write, persist
+   and directory, with delete.
+
+Larger files need more than pages: the notepad, Commander's copy (one
+256-byte chunk today) and the file lists have their own limits, which
+Jon's roadmap already plans to lift.
+
+**Testing.** In the emulator model
+([zesarux-tspico](https://github.com/timex-sinclair-projects/zesarux-tspico)):
+save a note, reset, load ZXDesk again and open it; with the switch on, a
+save is refused and the file is unchanged. Jon's automated test runs on his
+TSRun emulator, which would need the board's registers and pages modelled.
+On the board, the same across a power cycle.
+
+**Later.** More files than one bank holds (pages from `tpi:ram alloc`);
+window save-areas and other buffers in pages, which the 512-column build
+most needs, having about 6.4K of heap to the 256-column build's 7.9K (Jon's
+roadmap puts a RAM disk first); and files exchanged with BASIC as `r:`
+files, which needs a machine-code entry to the RAM disk because ZXDesk
+doesn't use the ROM (open question 8).
 
 ## Hardware
 
@@ -716,7 +844,7 @@ the board).
 
 **Allocating pages for a program**, so programs and files never collide, is
 a `tpi:ram alloc` command that reserves pages below the RAM disk and records
-them in the superblock. Its exact form is for the GUI author to shape (open
+them in the superblock. Its exact form is for Jon, the GUI author, to shape (open
 question 8).
 
 ## Channels (phase 9)
@@ -944,7 +1072,7 @@ bytes unchanged: whether it should translate text files to PC text, as an
   it should for `f:` (testing).
 - **Data that outlives a program:** a file written by one program and read
   by the next after `NEW` or `LOAD`, without the SD card. This is what the
-  GUI author's settings and save games need (open question 8).
+  settings and save games of Jon's GUI need (open question 8).
 
 ### Coexisting with `f:`
 
@@ -1244,9 +1372,28 @@ reference for what it changes.
    - **The edge fingers' sides:** confirm that side A is the top, as v3
      assumes.
 7. **A name** for the board.
-8. **What the GUI author needs** from `tpi:ram alloc` and from the ROM: page
+8. **What Jon, the GUI author, needs** from `tpi:ram alloc` and from the ROM: page
    allocation from BASIC, a machine-code entry point, a page size other than
-   8K? Worth showing them this document.
+   8K? Worth showing him this document. **Partly answered (2026-10-27)** by
+   his ZXDesk, a GUI that takes the machine over ([ZXDesk](#zxdesk)):
+   - **Its first need takes nothing from the ROM:** a storage backend in
+     eight pages (a directory and seven 8K files), mapped one at a time
+     into chunk 7 by the board's registers. 8K pages suit it: they are
+     the size of its 128K backend's files.
+   - **It never calls the ROM** once running, so a ROM entry point is no
+     use to it while it runs. Allocation must be something its BASIC loader
+     does before `RANDOMIZE USR` (`SAVE "tpi:ram alloc zxdesk 8"`, say,
+     leaving the first page's number where the program can find it), or
+     something the program can read for itself from the superblock, by
+     mapping the RAM disk's top page. The allocation needs a name, so the
+     program finds the same pages at every start.
+   - **Until then** it uses the board's first bank, pages 0–7.
+     `tpi:ram alloc` must then hand those pages to ZXDesk rather than to
+     someone else, or ZXDesk must move its files when it first sees an
+     allocation.
+   - **Still open:** whether `r:` files from a program that has taken the
+     machine over (notes swapped with BASIC) are worth a machine-code
+     entry to the mover, and that entry's form.
 9. **SYSCON entries for RAM banks.** SYSCON holds at most 10 entries (its
    scratch space at 5FE9h–5FFFh is hard-coded). Nothing validates bank numbers
    against it, so RAM banks may not need entries at all; decide in phase 8.
