@@ -14,11 +14,10 @@ copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
   and the GPIO46/47 test pads). Silkscreen: all 90 designators placed.
 - **Fab files:** `python3 scripts/gen_fab.py` writes the Gerbers, BOM and CPL
   to `fab/jlcpcb/` (ignored by git); `fab/NOTES.md` lists what to check on upload.
-- **Parts:** every part JLCPCB fits has an LCSC number; BT1 (Keystone 3034) is fitted by hand. $26.27 a board in parts at
+- **Parts:** every fitted part has an LCSC number. $26.63 a board in parts at
   10 boards (`jlc_price.py`, 2026-11-07; it counts U1-U4 once, so about $27),
-  plus $42 in extended-part fees once; the two SRAMs are $20.86 of it. The
-  ME6211C12 LDO (32,146 in stock) is an extended part like the L1 it replaced;
-  dropping BT1 saved one fee. Add the Keystone 3034 from DigiKey.
+  plus $45 in extended-part fees once; the two SRAMs are $20.86 of it. The
+  ME6211C12 LDO (32,146 in stock) is an extended part like the L1 it replaced.
 
 ## Form factor
 
@@ -84,10 +83,11 @@ strobes, /BE, the ~CE1s and the page bits. Everything both need sits in 16-31:
   runs from USB alone on the bench. SWD pads TP1-TP3 too.
 - **/BE read back:** U4's eighth channel brings /BE in as nBE_L (GPIO42), for
   timing on the bench and to see v3 serve a chunk.
-- **BT1 fitted by hand** (2026-11-07): the CR2032 holder is the only part
-  that forces JLCPCB's Standard PCBA (edge rails, which would sit against the
-  fingers), so it is DNP there. Use a Keystone 3034 (DigiKey 36-3034-ND), the
-  footprint's own part, so there is no drawing to check it against.
+- **BT1 is a Keystone 3034TR** (C5213768, 2026-11-07), the footprint's own
+  part, as on the OpenSpand card, where JLCPCB placed it. The Q&J
+  CR2032-BS-6-1 (C70377) made JLCPCB move the order to Standard PCBA (edge
+  rails, which would sit against the fingers). Stock is thin (654); if it runs
+  out, leave BT1 off and fit a Keystone 3034 from DigiKey (36-3034-ND) by hand.
 - **R3, a /BE pull-up to +5V_EDGE, DNP** (open question 13): the bus already has
   v3's 2k2; the pad is there if the prototype shows /BE rising too slowly.
 - **An LDO for the core, not the on-chip switcher** (2026-11-07): U23, an

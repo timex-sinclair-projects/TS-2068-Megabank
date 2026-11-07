@@ -47,7 +47,7 @@ PARTS = {
     ("RUN", "SW_Push_1P1T_XKB_TS-1187A"): ("TS-1187A-B-A-B", "C318884", "basic, XKB"),
     ("BOOTSEL", "SW_Push_1P1T_XKB_TS-1187A"): ("TS-1187A-B-A-B", "C318884", "basic, XKB"),
     ("WP", "SW_SPDT_Shouhan_MSK12C02"): ("MSK12C02", "C431540", "extended, SHOU HAN slide switch"),
-    ("CR2032", "BatteryHolder_Keystone_3034_1x20mm"): ("3034", "", "Keystone SMD holder, the footprint's own part; DNP at JLCPCB, where any holder forces Standard PCBA (the Q&J CR2032-BS-6-1, C70377, did). Order from DigiKey (36-3034-ND) and fit by hand"),
+    ("CR2032", "BatteryHolder_Keystone_3034_1x20mm"): ("3034TR", "C5213768", "extended, Keystone, the footprint's own part, as on the OpenSpand card, where JLCPCB placed it; 654 in stock 2026-11-07. The Q&J CR2032-BS-6-1 (C70377) forced Standard PCBA. Fallback: DigiKey 36-3034-ND by hand"),
 }
 
 
