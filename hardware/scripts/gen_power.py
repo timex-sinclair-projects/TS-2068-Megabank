@@ -82,7 +82,7 @@ def main():
     s.text("controller and buffers drive the SRAM). C53 >= 0.1 uF for the LM66200's soft start. ST unused.", 100, 203, 1.5)
     s.text("Check on the prototype: a fresh CR2032 reads up to about 3.3 V open-circuit, close to +3V3; see hardware/README.md.", 100, 206, 1.5)
 
-    BT1 = s.place("Device:Battery_Cell", "BT1", "CR2032", BAT_FP, 60, 170)
+    BT1 = s.place("Device:Battery_Cell", "BT1", "CR2032", BAT_FP, 60, 170, dnp=True)   # hand-fitted: the only part that forces JLCPCB Standard PCBA
     s.label("BATT+", BT1.pin("+")); s.label("GND", BT1.pin("-"))
     F4 = s.place("power:PWR_FLAG", "#FLG15", "PWR_FLAG", "", 40, 160)
     s.label("BATT+", F4.pin("1"))
