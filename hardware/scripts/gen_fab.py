@@ -101,6 +101,7 @@ def main():
         f.write(f"- Not in the BOM/CPL (not assembled): {', '.join(sorted(skipped))}.\n")
         f.write("- BOM lines with no LCSC number (pick at upload): " + ("; ".join(f"{c} ({r})" for c, r in missing) or "none") + ".\n")
         f.write("- U23 (ME6211C12, SOT-23-5) supplies the RP2350B core (DVDD, 1.2 V); the chip's own switcher is unused (no inductor). Pin 1 is VIN: check its dot in the placement preview.\n")
+        f.write("- BT1 is the Keystone 3034TR (C5213768), as on the OpenSpand card; the Q&J CR2032-BS-6-1 (C70377) forced Standard PCBA. If stock runs out, leave it off and fit a Keystone 3034 (DigiKey 36-3034-ND) by hand.\n")
         f.write("- DNP (footprint only): R3 (/BE pull-up, open question 13). R13/R14 are fitted for the CY62167EV30; leave them off for a DV30 build.\n")
         f.write("- All drills are 0.3 mm or larger; all vias 0.6/0.3 mm.\n")
         f.write("- Check rotations in JLCPCB's placement preview: JLC's part orientation differs from KiCad's for many footprints (QFN, SOT-223, SOIC, connectors); fix there, not here.\n")
