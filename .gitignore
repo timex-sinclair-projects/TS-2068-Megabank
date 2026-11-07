@@ -8,7 +8,8 @@ fp-info-cache
 *.kicad_pcb-bak
 *.kicad_sch-bak
 *.bak
-hardware/fab/
+hardware/fab/jlcpcb/gerbers/
+hardware/fab/route/
 hardware/*.rpt
 hardware/*.json
 # OS / editors

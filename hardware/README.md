@@ -13,7 +13,9 @@ copied here and renamed. Spec: [../docs/spec.md](../docs/spec.md).
   2026-11-07 for the core LDO, which replaced the RP2350B's switcher and L1,
   and the GPIO46/47 test pads). Silkscreen: all 90 designators placed.
 - **Fab files:** `python3 scripts/gen_fab.py` writes the Gerbers, BOM and CPL
-  to `fab/jlcpcb/` (ignored by git); `fab/NOTES.md` lists what to check on upload.
+  to `fab/jlcpcb/`, committed: `megabank-gerbers.zip`, `megabank-bom.csv`,
+  `megabank-cpl.csv`, ready to upload as they are (the unzipped Gerbers are not
+  committed); `fab/NOTES.md` lists what to check on upload.
 - **Parts:** every fitted part has an LCSC number. $26.63 a board in parts at
   10 boards (`jlc_price.py`, 2026-11-07; it counts U1-U4 once, so about $27),
   plus $45 in extended-part fees once; the two SRAMs are $20.86 of it. The
