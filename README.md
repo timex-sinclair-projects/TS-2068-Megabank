@@ -12,10 +12,11 @@ It gives the 2068:
 - **A RAM disk:** `SAVE "r:name"`, `LOAD "r:name"`, `CAT "r:"` and the rest,
   kept through power-off by a battery.
 
-**Status:** design. Nothing is built yet. Start with the
-[specification](docs/spec.md); the board's KiCad project (schematic done,
-routed on the TS-Pico v3's form factor, DRC clean, not yet ordered) is in
-[hardware/](hardware/README.md).
+**Status:** first boards back from JLCPCB (2026-11-18), bench bring-up on
+USB under way: [firmware/bringup/](firmware/bringup/README.md) has the test
+firmware and the results. Not yet tried in a 2068. Start with the
+[specification](docs/spec.md); the board's KiCad project (routed on the
+TS-Pico v3's form factor, DRC clean) is in [hardware/](hardware/README.md).
 
 ![The Megabank card, rendered from the routed KiCad board: the RP2350B controller in the middle, the two 2 MB SRAMs on the right, the CR2032 battery on the left, the bus buffers over the gold fingers](docs/images/megabank-top.png)
 
