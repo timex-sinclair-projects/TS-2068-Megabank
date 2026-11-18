@@ -587,11 +587,26 @@ and none of it depends on BUSISO or IOA5:
   shadows through a plain reset, so the boot-time writes resynchronise every
   device that watches.
 
-**BUSISO is not used.** On the TS2068_Extender, a per-slot jumper feeds /BE
-to the BUSISO pin of the next-lower slot, so a device there can hold off its
-own /BE. The TS-Pico goes in slot 1 with its jumper open (closed, it sees
-its own /BE and stops working). This board goes in any free slot, jumper
-open, and arbitrates through the owner table instead.
+**BUSISO is not used.** Neither this board nor the v3 card connects B30
+(BUSISO): it is a no-connect pad on both. It arbitrates through the owner
+table instead.
+
+**/BE on the TS2068_Extender (V7) is a chain, not a bus** (schematic,
+2026-11-18). Only slot 1's /BE (A29) is wired to the 2068's. Each further
+slot's /BE goes to the BUSISO pin (B30) of the slot before it, and to that
+slot's /BE only through a slide switch: SW2 joins slot 2's /BE to slot 1's,
+SW3 slot 3's to slot 2's, SW4 the legacy connector's to slot 3's. With a
+switch open, a card further out pulls only the nearer card's BUSISO, and
+never reaches the 2068. So:
+
+- **A card that drives /BE must be in slot 1, or every switch between it
+  and slot 1 must be closed.** The v3 card goes in slot 1; this board in
+  slot 2 with SW2 closed (or slot 3 with SW2 and SW3 closed).
+- Closing the switches is harmless to both cards, since neither reads
+  BUSISO.
+- **Found on board 1 (2026-11-18):** in slot 2 with SW2 open, the board's
+  /BE readback stayed high with the v3 card in slot 1. In that arrangement
+  the board's own /BE would not reach the 2068 either.
 
 **IOA5 is not used.** It is free on the bus, and the shipped ROM's bank
 protocol gated register writes with it. But it is a pin of the AY's port A,

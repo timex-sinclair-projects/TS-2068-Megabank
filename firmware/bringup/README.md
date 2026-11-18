@@ -43,7 +43,16 @@ The automatic tests run once on the first connection; `a` runs them again,
 | `m` | SRAM probe | whether each chip drives SD0-SD7 when selected |
 | `t` | SRAM page test | one byte in each of the 512 pages, walking 1s and 0s on the data lines |
 | `k` / `c` | retention | `k` writes a seeded byte in every page and sets a flag in flash; unplug, plug back in, and the next automatic run checks it first, then clears the flag |
+| `z [n]` | bus monitor | in a 2068: n 1 s windows (default 5) of /INT, /NMI, /BE, /M1, memory cycles by chunk, I/O ports in and out; passive |
 | `u` | reboot | to BOOTSEL, for the next flash |
+
+The firmware is safe to leave in a 2068: it never drives the 2068's bus.
+The bench SRAM tests (`t`, `k`, the retention check) run only when BA0-BA7,
+nRD_L, nWR_L and nRESET_L read a steady 0 for 2 ms, which a running 2068
+never gives. Core 1 samples the bus for `z` (one 32-bit GPIO read every
+268 ns, against a 2068's /MREQ low for at least about 425 ns); it starts at
+boot, since `flash_safe_execute` needs it as a lockout victim once
+pico_multicore is linked.
 
 The safe state is held throughout: data buffer off (nDOE high), /BE and /NMI
 released, Z80 writes inhibited (WINH high), both SRAMs deselected, battery
@@ -92,3 +101,34 @@ the data lines, U12 and both chips; not A0-A12, nor the 2068's side.
 With the cell: **13 pass, 0 fail.** Still to do: retention over a day, the
 standby current (a meter in series with the cell), then the 2068 on the
 extender.
+
+**Board 1 in a 2068, 2026-11-18** (TS2068_Extender, board in a free slot,
+jumper open; passive, `z`): the 2068 boots and runs normally with the board
+fitted.
+
+- /RESET high; /INT 60-61 a second; 60 interrupt acknowledges a second.
+- Every buffered line moves: BA0-BA7, BA13-BA15, /MREQ, /IORQ, /RD, /WR,
+  /RFSH, /M1.
+- Idle at the K cursor: IN FEh 480 times a second (8 keyboard rows a frame),
+  about 747,000 memory reads a second in chunks 0, 2 and 3, none in 4-7,
+  the same to within 0.1% from one second to the next.
+- Typing: two OUT FEh per key (the click), chunk 1 reads appear.
+- `OUT 252,2: OUT 253,2: PRINT IN 252, IN 253`: exactly one OUT and one IN
+  each at FCh and FDh, with the AY's F5h/F6h for the ENTER beep. So the
+  address buffers and strobes give port decode what it needs. Nothing
+  answers yet: there's no controller firmware.
+- /BE with no TS-Pico: a steady high, as it should be (nothing pulls it
+  low). On the bench, with nothing on the fingers, nBE_L reads 0 like every
+  other floating input; here it read 1, so something on the 2068 or the
+  extender pulls /BE up (spec, open question 13). Not yet measured how
+  strongly.
+- /BE with the TS-Pico in slot 1 and this board in slot 2, SW2 open: still a
+  steady high. The extender chains /BE through its slide switches (spec,
+  "Sharing the bus"): with SW2 open, slot 2's /BE is only slot 1's BUSISO.
+- **SW2 closed:** /BE falls 591,478 times a second against 586,082 chunk 0
+  reads: the TS-Pico serving HOME, and the readback (U4's spare channel,
+  GPIO42) following it.
+- The monitor's refresh count is approximate: it fell from about 259,000 to
+  56,000 a second once /BE moved, against 370,000 /M1. A refresh /MREQ comes
+  about 140 ns after the fetch's /MREQ rises, inside one 268-285 ns sample,
+  so the two often read as one cycle; the extra /BE work slows the loop.
