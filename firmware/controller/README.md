@@ -18,8 +18,15 @@ per cycle, whether to answer and which page the SRAM sees.
 | core 1 | RAM | The registers; rewrites the `be` table and the page table on each register write, and on /RESET; follows the write-protect switch. |
 | core 0 | | A USB console. |
 
-`be` and `io` fill PIO0's 32 instructions. Clock: 150 MHz (the SDK's
-default); 250 MHz, as the v3 card runs, would need the flash timing set again.
+`be` and `io` fill PIO0's 32 instructions. Clock: 250 MHz, as the v3 card
+runs; the flash divider goes from 2 to 3 first (83 MHz), from RAM, since the
+boot divider would run the GD25Q128E at 125 MHz. The core runs from the
+board's 1.2 V LDO, so there's no regulator to raise.
+
+PIO2 holds a logic analyser for the board's own timing (console `c`): `la`
+samples GP16-GP47 into a 16 KB DMA ring every 8 ns, `trig` flags a write to
+an owned chunk, and core 0 stops the ring 8 us later and prints that cycle
+(and the last mapped read in the ring) as a waveform and a list of edges.
 
 **Chunks 0 and 1 are locked** by default: the TS-Pico serves HOME and EXROM
 there with its own /BE, and until its firmware follows the owner table both
@@ -44,7 +51,7 @@ picotool load -f -x build/megabank.uf2
 `screen /dev/cu.usbmodem101`, then a key: `r` registers and counters, `l`
 the last 64 register writes, `d` diagnostics (the state machines, the DMA
 chain, the page table, which page pins moved in 50 ms), `v` battery, `k` the
-chunk 0-1 lock, `mCB` OWN of chunk C = bank B, `u` reboot to BOOTSEL.
+chunk 0-1 lock, `c` capture a mapped write, `mCB` OWN of chunk C = bank B, `u` reboot to BOOTSEL.
 
 ## From BASIC
 
@@ -74,6 +81,11 @@ slot 2, SW2 closed):
   separate, and **writes also land in the 2068's own RAM** under the
   mapped chunk (the last line: the 2068's RAM holds 222). Spec, open
   question 2.
+- At 250 MHz (v2): still 111, 222, 222. The capture (`c`, with
+  `80 POKE 40960,PEEK 40960: GO TO 80` running), in ns from /MREQ falling:
+  /BE low at +40, /CE1_0 and WINH at +80, /WR low at +280, /MREQ and /WR
+  high at +560, /BE high again at +640. /BE is down well before /WR, so the
+  write leak is the 2068's: its RAM takes a write even with /BE low.
 - First run, before a fix: the DMA chain never ran (an endless transfer
   count of 0; the RP2350 needs a non-zero count with the endless mode), so
   the SRAM was never selected and mapped reads returned whatever the data

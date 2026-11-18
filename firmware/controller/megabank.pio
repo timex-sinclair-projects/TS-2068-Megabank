@@ -112,3 +112,32 @@ settle:
     wait 1 pin 3                            ; /MREQ high
     mov pins, ~null
 .wrap
+
+; -----------------------------------------------------------------------------
+; la, trig (PIO2, GPIO base 16): a logic analyser for timing the board's own
+; cycles. `la` samples GP16-GP47 into a DMA ring every cycle; `trig` sets IRQ 0
+; when /WR goes low while BE_REQ is high (a write to a chunk the board owns).
+; Core 0 sees the flag, lets the ring run on a little, and stops it.
+;
+; Pin numbers in `wait pin` are relative to in_base GP16: 11 is BE_REQ (GP27).
+; trig: jmp pin GP22 (/WR); OSR shifts right.
+; -----------------------------------------------------------------------------
+.program la
+.wrap_target
+    in pins, 32                             ; autopush
+.wrap
+
+.program trig
+public top:
+    wait 1 pin 11                           ; BE_REQ: a cycle the board owns
+poll:
+    jmp pin high                            ; /WR still high
+    irq set 0                               ; /WR low: a mapped write
+    wait 0 pin 11
+    jmp top
+high:
+    mov osr, pins
+    out null, 11
+    out x, 1                                ; BE_REQ
+    jmp !x top                              ; the cycle ended without a write
+    jmp poll

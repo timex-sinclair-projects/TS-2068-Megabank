@@ -28,6 +28,8 @@
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/structs/busctrl.h"
+#include "hardware/structs/qmi.h"
+#include "hardware/sync.h"
 
 #include "megabank.pio.h"
 
@@ -50,11 +52,13 @@
 #define PIN_BAT_ADC  40
 #define PIN_BAT_EN   41
 #define PIN_NMI_REQ  45
+#define PIN_NBE_L    42
 
 #define PAGE_PINS    11   // GP28-GP38
 #define PAGE_IDLE    0x7ffu
 
-#define VERSION      1
+#define VERSION      2
+#define SYS_KHZ      250000
 
 // ---- state -------------------------------------------------------------------
 
@@ -332,6 +336,173 @@ static void bus_start(void) {
     pio_set_sm_mask_enabled(pio_bus, (1u << sm_be) | (1u << sm_io), true);
 }
 
+// ---- clock --------------------------------------------------------------------
+
+// The flash runs at clk_sys / CLKDIV. At 250 MHz the boot divider would give
+// 125 MHz, over the GD25Q128E's rating: go to /3 (83 MHz) first, from RAM.
+static void __no_inline_not_in_flash_func(flash_slow)(void) {
+    uint32_t t = qmi_hw->m[0].timing;
+    t = (t & ~QMI_M0_TIMING_CLKDIV_BITS) | (3u << QMI_M0_TIMING_CLKDIV_LSB);
+    t = (t & ~QMI_M0_TIMING_RXDELAY_BITS) | (2u << QMI_M0_TIMING_RXDELAY_LSB);
+    qmi_hw->m[0].timing = t;
+    (void)qmi_hw->m[0].timing;
+}
+
+static void clock_up(void) {
+    flash_slow();
+    set_sys_clock_khz(SYS_KHZ, true);   // the core runs from the board's 1.2 V LDO
+}
+
+// ---- logic analyser (PIO2) -------------------------------------------------------
+
+#define LA_N      4096                  // samples, a 16 KB ring
+#define LA_DIV    2                     // a sample every 2 clk_sys cycles
+static uint32_t la_buf[LA_N] __attribute__((aligned(LA_N * 4)));
+static PIO const pio_la = pio2;
+static uint sm_la = 0, sm_trig = 1, off_la, off_trig;
+static int ch_la = -1;
+
+// Bits of a sample (GP16 + n).
+enum { B_A13 = 0, B_MREQ = 3, B_IORQ, B_RD, B_WR, B_RFSH, B_M1,
+       B_DOE = 10, B_BEREQ, B_CE0, B_CE1, B_WINH = 22, B_BE = 26 };
+#define S(i, b)  (lin[i] >> (b) & 1)
+
+static void la_init(void) {
+    pio_set_gpio_base(pio_la, 16);
+    off_la = pio_add_program(pio_la, &la_program);
+    off_trig = pio_add_program(pio_la, &trig_program);
+
+    pio_sm_config c = la_program_get_default_config(off_la);
+    sm_config_set_in_pins(&c, 16);
+    sm_config_set_in_shift(&c, false, true, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv_int_frac8(&c, LA_DIV, 0);
+    pio_sm_init(pio_la, sm_la, off_la, &c);
+
+    c = trig_program_get_default_config(off_trig);
+    sm_config_set_in_pins(&c, 16);
+    sm_config_set_jmp_pin(&c, PIN_NWR);
+    sm_config_set_out_shift(&c, true, false, 32);
+    pio_sm_init(pio_la, sm_trig, off_trig, &c);
+
+    ch_la = dma_claim_unused_channel(true);
+}
+
+static void la_arm(void) {
+    pio_set_sm_mask_enabled(pio_la, (1u << sm_la) | (1u << sm_trig), false);
+    dma_channel_abort(ch_la);
+    pio_sm_clear_fifos(pio_la, sm_la);
+    pio_sm_restart(pio_la, sm_la);
+    pio_sm_restart(pio_la, sm_trig);
+    pio_sm_exec(pio_la, sm_trig, pio_encode_jmp(off_trig + trig_offset_top));
+    pio_la->fdebug = (1u << (PIO_FDEBUG_RXSTALL_LSB + sm_la));
+    dma_channel_config d = dma_channel_get_default_config(ch_la);
+    channel_config_set_transfer_data_size(&d, DMA_SIZE_32);
+    channel_config_set_read_increment(&d, false);
+    channel_config_set_write_increment(&d, true);
+    channel_config_set_ring(&d, true, 14);
+    channel_config_set_dreq(&d, pio_get_dreq(pio_la, sm_la, false));
+    dma_channel_configure(ch_la, &d, la_buf, &pio_la->rxf[sm_la],
+                          (DMA_CH0_TRANS_COUNT_MODE_VALUE_ENDLESS << DMA_CH0_TRANS_COUNT_MODE_LSB) | 1, true);
+    pio_set_sm_mask_enabled(pio_la, (1u << sm_la) | (1u << sm_trig), true);
+}
+
+// Stops the ring; returns the index of the oldest sample.
+static uint la_stop(void) {
+    pio_sm_set_enabled(pio_la, sm_la, false);
+    pio_sm_set_enabled(pio_la, sm_trig, false);
+    while (!pio_sm_is_rx_fifo_empty(pio_la, sm_la)) tight_loop_contents();
+    busy_wait_us_32(2);
+    uint idx = ((uintptr_t)dma_hw->ch[ch_la].write_addr - (uintptr_t)la_buf) / 4 % LA_N;
+    dma_channel_abort(ch_la);
+    return idx;
+}
+
+static uint32_t lin[LA_N];
+
+static void la_rows(int from, int to, int t0, uint ns_x10) {
+    static const struct { const char *name; uint8_t bit; } rows[] = {
+        {"/MREQ", B_MREQ}, {"/RD", B_RD}, {"/WR", B_WR}, {"/RFSH", B_RFSH}, {"/M1", B_M1},
+        {"BE_REQ", B_BEREQ}, {"/BE bus", B_BE}, {"nDOE", B_DOE},
+        {"/CE1_0", B_CE0}, {"/CE1_1", B_CE1}, {"WINH", B_WINH},
+    };
+    if (from < 0) from = 0;
+    if (to > LA_N) to = LA_N;
+    printf("  one column = 2 samples = %u.%u ns; | marks /MREQ falling\n", 2 * ns_x10 / 10, 2 * ns_x10 % 10);
+    for (unsigned r = 0; r < sizeof rows / sizeof rows[0]; r++) {
+        printf("  %-8s", rows[r].name);
+        for (int i = from; i + 1 < to; i += 2) {
+            int a = S(i, rows[r].bit), b = S(i + 1, rows[r].bit);
+            putchar(i == t0 || i + 1 == t0 ? '|' : a != b ? 'x' : a ? '-' : '_');
+        }
+        putchar('\n');
+    }
+    // The edges, in ns from /MREQ falling.
+    for (unsigned r = 0; r < sizeof rows / sizeof rows[0]; r++) {
+        printf("  %-8s %s", rows[r].name, S(from, rows[r].bit) ? "hi" : "lo");
+        for (int i = from + 1; i < to; i++)
+            if (S(i, rows[r].bit) != S(i - 1, rows[r].bit))
+                printf("  %s%+d", S(i, rows[r].bit) ? "^" : "v", (int)((i - t0) * (int)ns_x10) / 10);
+        putchar('\n');
+    }
+}
+
+// The memory cycle around sample i: /MREQ's fall before it and rise after.
+static bool la_cycle(int i, int *f, int *r) {
+    int a = i, b = i;
+    while (a > 0 && !S(a - 1, B_MREQ)) a--;
+    while (b < LA_N - 1 && !S(b + 1, B_MREQ)) b++;
+    if (a == 0 || b == LA_N - 1) return false;
+    *f = a; *r = b + 1;
+    return true;
+}
+
+static void la_capture(void) {
+    if (ch_la < 0) la_init();
+    uint ns_x10 = 10000000u * LA_DIV / (clock_get_hz(clk_sys) / 1000);   // per sample, x10
+    printf("\nCapturing: waiting up to 10 s for a write to a mapped chunk...\n");
+    absolute_time_t until = make_timeout_time_ms(10000);
+    while (!time_reached(until)) {
+        la_arm();
+        busy_wait_us_32(100);           // fill the ring once
+        pio_interrupt_clear(pio_la, 0);
+        uint32_t irq = save_and_disable_interrupts();
+        absolute_time_t slice = make_timeout_time_ms(20);
+        bool hit = false;
+        while (!time_reached(slice))
+            if (pio_la->irq & 1) { hit = true; break; }
+        if (!hit) { restore_interrupts(irq); continue; }
+        busy_wait_us_32(8);             // keep ~8 us after the trigger
+        uint old = la_stop();
+        restore_interrupts(irq);
+        bool stall = pio_la->fdebug & (1u << (PIO_FDEBUG_RXSTALL_LSB + sm_la));
+        for (uint i = 0; i < LA_N; i++) lin[i] = la_buf[(old + i) % LA_N];
+
+        // The last mapped write in the ring.
+        int t = -1;
+        for (int i = LA_N - 1; i >= 0; i--)
+            if (S(i, B_BEREQ) && !S(i, B_WR)) { t = i; break; }
+        int f, r;
+        if (t < 0 || !la_cycle(t, &f, &r)) continue;
+        printf("Mapped write, chunk %lu (%s):\n", (unsigned long)(lin[t] & 7),
+               stall ? "SAMPLES DROPPED" : "no samples dropped");
+        la_rows(f - 24, r + 24, f, ns_x10);
+
+        // The nearest mapped read before it, for comparison.
+        for (int i = f - 1; i >= 0; i--)
+            if (S(i, B_BEREQ) && !S(i, B_RD) && S(i, B_WR)) {
+                int f2, r2;
+                if (la_cycle(i, &f2, &r2)) {
+                    printf("Mapped read before it, chunk %lu:\n", (unsigned long)(lin[i] & 7));
+                    la_rows(f2 - 24, r2 + 24, f2, ns_x10);
+                }
+                break;
+            }
+        return;
+    }
+    printf("No mapped write seen. Map a chunk (OUT 253,5: OUT 252,1) and POKE into it in a loop.\n");
+}
+
 // ---- core 0: battery and console ----------------------------------------------
 
 static float battery_volts(void) {
@@ -394,19 +565,21 @@ static void show_diag(void) {
 }
 
 static void help(void) {
-    printf("\nMegabank controller v%d. Commands:\n"
+    printf("\nMegabank controller v%d, clk_sys %lu MHz. Commands:\n"
            "  r   registers and counters\n"
            "  l   log of register writes\n"
            "  d   diagnostics: page SM, DMA, page pins\n"
            "  mCB OWN of chunk C = bank B (digits)\n"
            "  v   battery\n"
+           "  c   capture a mapped write (and a read): /MREQ /RD /WR /BE ... timing\n"
            "  k   toggle the chunk 0-1 lock (the TS-Pico serves the ROM there)\n"
            "  u   reboot to BOOTSEL\n",
-           VERSION);
+           VERSION, (unsigned long)(clock_get_hz(clk_sys) / 1000000));
 }
 
 int main(void) {
     board_safe_init();
+    clock_up();
     stdio_init_all();
     float v = battery_volts();
     battery_low = v < 2.5f;
@@ -419,6 +592,7 @@ int main(void) {
         case 'r': show_regs(); break;
         case 'l': show_log(); break;
         case 'd': show_diag(); break;
+        case 'c': la_capture(); break;
         case 'm': {
             // m<c><b>: OWN of chunk c = bank b (digits), from the console
             int c = getchar_timeout_us(2000000) - '0', b = getchar_timeout_us(2000000) - '0';

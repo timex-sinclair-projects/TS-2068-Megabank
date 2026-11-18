@@ -1382,11 +1382,20 @@ reference for what it changes.
    same address. **But /BE does not stop a write reaching the 2068's own
    RAM:** after writing 111 into bank 1 and 222 into bank 2 at A000h, the
    2068's own RAM there read 222. So every write to a mapped bank also lands
-   in the 2068 RAM underneath it. Not yet known: whether that's this
-   2068's SCLD (/BE gating only the read path) or our /BE arriving too late
-   for a write; a scope on /BE, /MREQ and /WR settles it. If it's the SCLD,
-   the RAM disk's window and the mover must use a chunk whose 2068 RAM may
-   be overwritten, or save and restore it. Timing on a scope is still to do.
+   in the 2068 RAM underneath it.
+   **It's the 2068, not our timing (2026-11-18, 250 MHz).** The same test
+   gives 111, 222, 222 at 250 MHz. The controller's own capture (console
+   `c`: GP16-GP47 every 8 ns, from PIO2) of a mapped write to chunk 5, in ns
+   from /MREQ falling: BE_REQ and nDOE at +40, the bus's /BE low at +40,
+   /CE1_0 and WINH low at +80, /WR low at +280, /MREQ and /WR high at +560,
+   /BE released at +576 and back high at +640. /BE is down 240 ns before
+   /WR and stays down past the cycle's end, and the 2068's RAM still takes
+   the write: on this 2068, /BE keeps its RAM off the bus on a read but does
+   not stop the write. So the RAM disk's window and the mover must use a
+   chunk whose 2068 RAM may be overwritten, or save and restore it. Still to
+   check: other 2068s (and a TC2068 or TS2068 with a different SCLD
+   revision), and the slow /BE rise (+576 to +640: the pull-up, open
+   question 13) against the next cycle, which here began at +696.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.
