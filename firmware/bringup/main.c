@@ -372,10 +372,19 @@ static void test_battery(void) {
     sleep_ms(25);
     float on = adc_volts(0, 64) * 2;
     gpio_put(PIN_BAT_EN, 0);
-    sleep_ms(25);
-    float after = adc_volts(0, 64) * 2;
+    // C55 then drains through R52: 100k x 100nF, a 10 ms time constant.
+    float decay[4];
+    static const int at_ms[4] = {10, 25, 50, 100};
+    absolute_time_t t0 = get_absolute_time();
+    for (int i = 0; i < 4; i++) {
+        sleep_until(delayed_by_ms(t0, at_ms[i]));
+        decay[i] = adc_volts(0, 16) * 2;
+    }
+    float after = decay[3];
     report(off < 0.1f && after < 0.1f ? R_PASS : R_FAIL, "off",
-           "%.3f V before, %.3f V after (expect ~0: Q1 off, R52 holds the pin)", off, after);
+           "%.3f V before; after BAT_EN low %.3f/%.3f/%.3f/%.3f V at 10/25/50/100 ms "
+           "(expect ~0 by 100 ms: Q1 off, C55 drains through R52)",
+           off, decay[0], decay[1], decay[2], decay[3]);
     bool ok = on >= 2.5f && on <= 3.45f;
     report(ok ? R_PASS : R_FAIL, "cell", "%.3f V%s", on,
            on < 0.3f ? " (no cell in BT1 - JLCPCB doesn't fit one - or Q1/Q2 not switching)"
@@ -495,8 +504,14 @@ static uint8_t page_pattern(unsigned page, bool inv) {
     return inv ? (uint8_t)~v : v;
 }
 
+static const struct keep_flag_s *keep_flag_any(void);
+
 static void test_sram(void) {
     heading("SRAM page test (bench: A0-A12 at their floating 0)");
+    if (keep_flag_any()) {
+        report(R_SKIP, "SRAM", "a retention pattern is waiting to be checked: 'c' first");
+        return;
+    }
     uint64_t in = gpio_get_all64();
     bool lo = !((in >> PIN_BA0) & 0xff) && !((in >> PIN_NRD_L) & 1) && !((in >> (PIN_NRD_L + 1)) & 1);
     if (!lo) {
@@ -538,11 +553,129 @@ static void test_sram(void) {
     gpio_put_masked64(0xffull << PIN_PA13, 0);
 }
 
+// ---- retention (hardware test 3, on the bench) --------------------------------
+
+// 'k' writes a pattern into every page (one byte each, as the page test) and
+// sets a flag in flash; unplug, wait, plug back in. On the next connection
+// the automatic run checks the pattern before anything else touches the SRAM,
+// then clears the flag. The flag tells "lost" from "never written". It lives
+// in the second-to-last flash sector (the flash test uses the last).
+
+#define KEEP_OFFSET (PICO_FLASH_SIZE_BYTES - 2 * FLASH_SECTOR_SIZE)
+#define KEEP_MAGIC  0x4d42524bu  // "KRBM"
+
+typedef struct keep_flag_s {
+    uint32_t magic;
+    uint32_t seed;
+    uint32_t written_ms;  // uptime when written, for the log
+    float cell_v;         // the cell when written
+} keep_flag_t;
+
+typedef struct {
+    bool erase_only;
+    const uint8_t *page;
+} keep_job_t;
+
+static void __no_inline_not_in_flash_func(keep_flash_job)(void *arg) {
+    keep_job_t *j = arg;
+    flash_range_erase(KEEP_OFFSET, FLASH_SECTOR_SIZE);
+    if (!j->erase_only) flash_range_program(KEEP_OFFSET, j->page, FLASH_PAGE_SIZE);
+}
+
+static const keep_flag_t *keep_flag(void) {
+    const keep_flag_t *f = (const keep_flag_t *)(XIP_NOCACHE_NOALLOC_BASE + KEEP_OFFSET);
+    return f->magic == KEEP_MAGIC ? f : NULL;
+}
+
+static uint8_t keep_pattern(unsigned page, uint32_t seed) {
+    uint32_t x = (page + 1) * 2654435761u ^ seed;
+    x ^= x >> 15;
+    x *= 0x2c1b3c6d;
+    x ^= x >> 12;
+    return (uint8_t)x;
+}
+
+static float cell_volts(void) {
+    gpio_put(PIN_BAT_EN, 1);
+    sleep_ms(25);
+    float v = adc_volts(0, 64) * 2;
+    gpio_put(PIN_BAT_EN, 0);
+    return v;
+}
+
+static bool sram_bench_ready(void) {
+    uint64_t in = gpio_get_all64();
+    return !((in >> PIN_BA0) & 0xff) && !((in >> PIN_NRD_L) & 1) && !((in >> (PIN_NRD_L + 1)) & 1);
+}
+
+static void keep_write(void) {
+    heading("Retention: write");
+    if (!sram_bench_ready()) {
+        report(R_SKIP, "keep", "BA0-BA7, nRD_L and nWR_L must all read 0 (see 'i')");
+        return;
+    }
+    float v = cell_volts();
+    if (v < 2.0f) {
+        report(R_FAIL, "keep", "cell reads %.2f V: fit a CR2032 first", v);
+        return;
+    }
+    keep_flag_t f = {KEEP_MAGIC, time_us_32() | 1, to_ms_since_boot(get_absolute_time()), v};
+    sd_release();
+    for (uint p = PIN_SD0; p < PIN_SD0 + 8; p++) gpio_disable_pulls(p);
+    for (unsigned page = 0; page < 512; page++) sram_write(page, keep_pattern(page, f.seed));
+    int bad = 0;
+    for (unsigned page = 0; page < 512; page++) bad += sram_read(page) != keep_pattern(page, f.seed);
+    gpio_put_masked64(0xffull << PIN_PA13, 0);
+    if (bad) {
+        report(R_FAIL, "keep", "%d of 512 pages read back wrong straight away; flag not set", bad);
+        return;
+    }
+    static uint8_t buf[FLASH_PAGE_SIZE];
+    memset(buf, 0xff, sizeof buf);
+    memcpy(buf, &f, sizeof f);
+    keep_job_t j = {false, buf};
+    flash_safe_execute(keep_flash_job, &j, 1000);
+    report(keep_flag() ? R_PASS : R_FAIL, "keep",
+           "512 pages written and verified, seed %08lx, cell %.3f V. Unplug USB now; plug back in "
+           "and connect to check.", f.seed, v);
+}
+
+static const struct keep_flag_s *keep_flag_any(void) { return keep_flag(); }
+
+// Returns true if there was a pattern to check.
+static bool keep_check(void) {
+    const keep_flag_t *f = keep_flag();
+    if (!f) return false;
+    heading("Retention: check (hardware test 3)");
+    if (!sram_bench_ready()) {
+        report(R_SKIP, "kept", "BA0-BA7, nRD_L and nWR_L must all read 0 (see 'i'); flag kept");
+        return true;
+    }
+    sd_release();
+    for (uint p = PIN_SD0; p < PIN_SD0 + 8; p++) gpio_disable_pulls(p);
+    int bad = 0;
+    for (unsigned page = 0; page < 512; page++) {
+        uint8_t want = keep_pattern(page, f->seed), got = sram_read(page);
+        if (got != want) {
+            if (bad < 8) printf("    page %3u (U1%u): want %02x read %02x\n", page, page >> 8, want, got);
+            bad++;
+        }
+    }
+    gpio_put_masked64(0xffull << PIN_PA13, 0);
+    float v = cell_volts();
+    report(bad ? R_FAIL : R_PASS, "kept", "%d of 512 pages lost; seed %08lx; cell %.3f V when written, %.3f V now",
+           bad, f->seed, f->cell_v, v);
+    keep_job_t j = {true, NULL};
+    flash_safe_execute(keep_flash_job, &j, 1000);
+    return true;
+}
+
 // ---- main -------------------------------------------------------------------
 
 static void run_auto(void) {
     n_pass = n_fail = n_look = 0;
     printf("\nMegabank bring-up (USB only): automatic tests\n");
+    keep_check();  // before anything else touches the SRAM
     test_system();
     test_flash();
     test_straps();
@@ -565,6 +698,7 @@ static void help(void) {
            "  w       write-protect switch monitor (15 s)\n"
            "  m       SRAM probe (not a memory test)\n"
            "  t       SRAM page test (bench: one byte per page)\n"
+           "  k c     retention: write a pattern (then unplug), check it\n"
            "  u       reboot to BOOTSEL (USB drive)\n"
            "  h       this help\n");
 }
@@ -598,6 +732,10 @@ int main(void) {
             case 'w': monitor_wp(); break;
             case 'm': probe_sram(); break;
             case 't': test_sram(); break;
+            case 'k': keep_write(); break;
+            case 'c':
+                if (!keep_check()) printf("No retention pattern written ('k' writes one).\n");
+                break;
             case 'u':
                 printf("Rebooting to BOOTSEL.\n");
                 sleep_ms(100);

@@ -42,6 +42,7 @@ The automatic tests run once on the first connection; `a` runs them again,
 | `i` | bus inputs | what BA0-BA7, BA13-BA15 and the control copies read (they float) |
 | `m` | SRAM probe | whether each chip drives SD0-SD7 when selected |
 | `t` | SRAM page test | one byte in each of the 512 pages, walking 1s and 0s on the data lines |
+| `k` / `c` | retention | `k` writes a seeded byte in every page and sets a flag in flash; unplug, plug back in, and the next automatic run checks it first, then clears the flag |
 | `u` | reboot | to BOOTSEL, for the next flash |
 
 The safe state is held throughout: data buffer off (nDOE high), /BE and /NMI
@@ -62,7 +63,7 @@ the data lines, U12 and both chips; not A0-A12, nor the 2068's side.
 ## Results
 
 **Board 1, 2026-11-18** (JLCPCB assembly, RP2350 A4, on USB alone): 11 pass,
-1 fail.
+1 fail with no cell; 12 pass with one.
 
 - RP2350B: 48 GPIOs, crystal 12.000 MHz, clk_sys 150 MHz, clk_usb 48 MHz, die
   35 °C. Picotool, in BOOTSEL before any firmware: RP2350 A4, QFN80.
@@ -74,7 +75,20 @@ the data lines, U12 and both chips; not A0-A12, nor the 2068's side.
 - Bus inputs: all read a steady 0 with nothing on the fingers.
 - SRAM page test: walking 1s and 0s on both chips, and 512 pages × 2
   patterns, no errors.
-- Battery: the monitor reads 0 V off (pass) and 0 V on (fail), as it should:
-  no cell is fitted (JLCPCB fits the holder, not a CR2032). To do with a
-  cell: the reading, and hardware test 3 (retention, standby current).
-- SW5: reads "writable"; the switch has not been slid yet.
+- Battery, first run: 0 V on, since no cell was fitted (JLCPCB fits the
+  holder, not a CR2032).
+- Battery, with a fresh CR2032: 3.23 V. Off, the pin reads 0 V before
+  BAT_EN goes high; after it goes low, 1.67/0.41/0.04/0.00 V at
+  10/25/50/100 ms. Q1 takes a few ms to turn off (R3, 1 M, charging its
+  gate), then C55 drains through R52 with the expected 10 ms time constant.
+  (The first version of the test looked at 25 ms and called that a fail.)
+- SW5: 11 changes in 15 s of sliding, no bounce seen after the 20 ms debounce.
+
+- Retention (hardware test 3, short form): all 512 pages written, USB
+  unplugged for a short while, plugged back in: 0 of 512 lost, cell 3.231 V
+  before, 3.229 V after. The battery takes over the SRAM rail (U32) and CE2
+  (U31) keeps the chips deselected while 3.3 V falls and rises.
+
+With the cell: **13 pass, 0 fail.** Still to do: retention over a day, the
+standby current (a meter in series with the cell), then the 2068 on the
+extender.
