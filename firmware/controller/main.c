@@ -355,25 +355,34 @@ static void clock_up(void) {
 
 // ---- logic analyser (PIO2) -------------------------------------------------------
 
+// Two windows (PIO2's GPIO base): 16 sees GP16-GP47 (WINH, the bus's /BE);
+// 0 sees GP0-GP31 (SD0-SD7, BA0-BA7). `trig` reads relative to in_base GP16
+// in both, so pin 11 is always BE_REQ.
 #define LA_N      4096                  // samples, a 16 KB ring
 #define LA_DIV    2                     // a sample every 2 clk_sys cycles
 static uint32_t la_buf[LA_N] __attribute__((aligned(LA_N * 4)));
 static PIO const pio_la = pio2;
 static uint sm_la = 0, sm_trig = 1, off_la, off_trig;
 static int ch_la = -1;
+static uint la_sh;                      // the window's first GPIO
 
-// Bits of a sample (GP16 + n).
-enum { B_A13 = 0, B_MREQ = 3, B_IORQ, B_RD, B_WR, B_RFSH, B_M1,
-       B_DOE = 10, B_BEREQ, B_CE0, B_CE1, B_WINH = 22, B_BE = 26 };
-#define S(i, b)  (lin[i] >> (b) & 1)
+static uint32_t lin[LA_N];
+static inline int S(int i, uint g) {
+    return g >= la_sh && g < la_sh + 32 ? (int)(lin[i] >> (g - la_sh) & 1) : 1;
+}
 
-static void la_init(void) {
-    pio_set_gpio_base(pio_la, 16);
-    off_la = pio_add_program(pio_la, &la_program);
-    off_trig = pio_add_program(pio_la, &trig_program);
+static void la_setup(uint window, uint trig_pin) {
+    pio_set_sm_mask_enabled(pio_la, (1u << sm_la) | (1u << sm_trig), false);
+    if (ch_la < 0) {
+        off_la = pio_add_program(pio_la, &la_program);
+        off_trig = pio_add_program(pio_la, &trig_program);
+        ch_la = dma_claim_unused_channel(true);
+    }
+    pio_set_gpio_base(pio_la, window);
+    la_sh = window;
 
     pio_sm_config c = la_program_get_default_config(off_la);
-    sm_config_set_in_pins(&c, 16);
+    sm_config_set_in_pins(&c, window);
     sm_config_set_in_shift(&c, false, true, 32);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
     sm_config_set_clkdiv_int_frac8(&c, LA_DIV, 0);
@@ -381,11 +390,9 @@ static void la_init(void) {
 
     c = trig_program_get_default_config(off_trig);
     sm_config_set_in_pins(&c, 16);
-    sm_config_set_jmp_pin(&c, PIN_NWR);
+    sm_config_set_jmp_pin(&c, trig_pin);
     sm_config_set_out_shift(&c, true, false, 32);
-    pio_sm_init(pio_la, sm_trig, off_trig, &c);
-
-    ch_la = dma_claim_unused_channel(true);
+    pio_sm_init(pio_la, sm_trig, off_trig + trig_offset_top, &c);
 }
 
 static void la_arm(void) {
@@ -418,49 +425,65 @@ static uint la_stop(void) {
     return idx;
 }
 
-static uint32_t lin[LA_N];
-
 static void la_rows(int from, int to, int t0, uint ns_x10) {
-    static const struct { const char *name; uint8_t bit; } rows[] = {
-        {"/MREQ", B_MREQ}, {"/RD", B_RD}, {"/WR", B_WR}, {"/RFSH", B_RFSH}, {"/M1", B_M1},
-        {"BE_REQ", B_BEREQ}, {"/BE bus", B_BE}, {"nDOE", B_DOE},
-        {"/CE1_0", B_CE0}, {"/CE1_1", B_CE1}, {"WINH", B_WINH},
+    static const struct { const char *name; uint8_t gpio; } rows[] = {
+        {"/MREQ", PIN_NMREQ}, {"/RD", PIN_NRD}, {"/WR", PIN_NWR}, {"/RFSH", PIN_NRFSH}, {"/M1", PIN_NM1},
+        {"BE_REQ", PIN_BE_REQ}, {"/BE bus", PIN_NBE_L}, {"nDOE", PIN_NDOE},
+        {"/CE1_0", PIN_NCE1_0}, {"/CE1_1", PIN_NCE1_0 + 1}, {"WINH", PIN_WINH},
     };
+    const unsigned nrows = sizeof rows / sizeof rows[0];
     if (from < 0) from = 0;
     if (to > LA_N) to = LA_N;
     printf("  one column = 2 samples = %u.%u ns; | marks /MREQ falling\n", 2 * ns_x10 / 10, 2 * ns_x10 % 10);
-    for (unsigned r = 0; r < sizeof rows / sizeof rows[0]; r++) {
+    for (unsigned r = 0; r < nrows; r++) {
+        uint g = rows[r].gpio;
+        if (g < la_sh || g >= la_sh + 32) continue;
         printf("  %-8s", rows[r].name);
         for (int i = from; i + 1 < to; i += 2) {
-            int a = S(i, rows[r].bit), b = S(i + 1, rows[r].bit);
-            putchar(i == t0 || i + 1 == t0 ? '|' : a != b ? 'x' : a ? '-' : '_');
+            int x = S(i, g), y = S(i + 1, g);
+            putchar(i == t0 || i + 1 == t0 ? '|' : x != y ? 'x' : x ? '-' : '_');
         }
         putchar('\n');
     }
     // The edges, in ns from /MREQ falling.
-    for (unsigned r = 0; r < sizeof rows / sizeof rows[0]; r++) {
-        printf("  %-8s %s", rows[r].name, S(from, rows[r].bit) ? "hi" : "lo");
+    for (unsigned r = 0; r < nrows; r++) {
+        uint g = rows[r].gpio;
+        if (g < la_sh || g >= la_sh + 32) continue;
+        printf("  %-8s %s", rows[r].name, S(from, g) ? "hi" : "lo");
         for (int i = from + 1; i < to; i++)
-            if (S(i, rows[r].bit) != S(i - 1, rows[r].bit))
-                printf("  %s%+d", S(i, rows[r].bit) ? "^" : "v", (int)((i - t0) * (int)ns_x10) / 10);
+            if (S(i, g) != S(i - 1, g))
+                printf("  %s%+d", S(i, g) ? "^" : "v", (int)((i - t0) * (int)ns_x10) / 10);
         putchar('\n');
+    }
+    if (la_sh == 0) {
+        // SD0-SD7 (the SRAM's side of U3) and BA0-BA7, each time they change.
+        printf("  SD       %02lx", (unsigned long)(lin[from] & 0xff));
+        for (int i = from + 1; i < to; i++)
+            if ((lin[i] ^ lin[i - 1]) & 0xff)
+                printf("  %02lx@%+d", (unsigned long)(lin[i] & 0xff), (int)((i - t0) * (int)ns_x10) / 10);
+        printf("\n  A7-A0    %02lx at /MREQ falling\n", (unsigned long)(lin[t0] >> 8 & 0xff));
     }
 }
 
 // The memory cycle around sample i: /MREQ's fall before it and rise after.
 static bool la_cycle(int i, int *f, int *r) {
     int a = i, b = i;
-    while (a > 0 && !S(a - 1, B_MREQ)) a--;
-    while (b < LA_N - 1 && !S(b + 1, B_MREQ)) b++;
+    while (a > 0 && !S(a - 1, PIN_NMREQ)) a--;
+    while (b < LA_N - 1 && !S(b + 1, PIN_NMREQ)) b++;
     if (a == 0 || b == LA_N - 1) return false;
     *f = a; *r = b + 1;
     return true;
 }
 
-static void la_capture(void) {
-    if (ch_la < 0) la_init();
+static inline bool la_is_write(int i) { return S(i, PIN_BE_REQ) && !S(i, PIN_NWR); }
+static inline bool la_is_read(int i) { return S(i, PIN_BE_REQ) && !S(i, PIN_NRD) && S(i, PIN_NM1); }
+
+// write: trigger on a mapped write, window GP16-47; else a mapped read
+// (not an opcode fetch), window GP0-31 with the data lines.
+static void la_capture(bool write) {
+    la_setup(write ? 16 : 0, write ? PIN_NWR : PIN_NRD);
     uint ns_x10 = 10000000u * LA_DIV / (clock_get_hz(clk_sys) / 1000);   // per sample, x10
-    printf("\nCapturing: waiting up to 10 s for a write to a mapped chunk...\n");
+    printf("\nCapturing: waiting up to 10 s for a %s a mapped chunk...\n", write ? "write to" : "read from");
     absolute_time_t until = make_timeout_time_ms(10000);
     while (!time_reached(until)) {
         la_arm();
@@ -478,29 +501,29 @@ static void la_capture(void) {
         bool stall = pio_la->fdebug & (1u << (PIO_FDEBUG_RXSTALL_LSB + sm_la));
         for (uint i = 0; i < LA_N; i++) lin[i] = la_buf[(old + i) % LA_N];
 
-        // The last mapped write in the ring.
         int t = -1;
         for (int i = LA_N - 1; i >= 0; i--)
-            if (S(i, B_BEREQ) && !S(i, B_WR)) { t = i; break; }
+            if (write ? la_is_write(i) : la_is_read(i)) { t = i; break; }
         int f, r;
         if (t < 0 || !la_cycle(t, &f, &r)) continue;
-        printf("Mapped write, chunk %lu (%s):\n", (unsigned long)(lin[t] & 7),
+        uint chunk = lin[f] >> (PIN_BA13 - la_sh) & 7;
+        printf("Mapped %s, chunk %u (%s):\n", write ? "write" : "read", chunk,
                stall ? "SAMPLES DROPPED" : "no samples dropped");
         la_rows(f - 24, r + 24, f, ns_x10);
 
-        // The nearest mapped read before it, for comparison.
-        for (int i = f - 1; i >= 0; i--)
-            if (S(i, B_BEREQ) && !S(i, B_RD) && S(i, B_WR)) {
-                int f2, r2;
-                if (la_cycle(i, &f2, &r2)) {
-                    printf("Mapped read before it, chunk %lu:\n", (unsigned long)(lin[i] & 7));
-                    la_rows(f2 - 24, r2 + 24, f2, ns_x10);
+        if (write)                      // the nearest mapped read before it, for comparison
+            for (int i = f - 1; i >= 0; i--)
+                if (la_is_read(i)) {
+                    int f2, r2;
+                    if (la_cycle(i, &f2, &r2)) {
+                        printf("Mapped read before it:\n");
+                        la_rows(f2 - 24, r2 + 24, f2, ns_x10);
+                    }
+                    break;
                 }
-                break;
-            }
         return;
     }
-    printf("No mapped write seen. Map a chunk (OUT 253,5: OUT 252,1) and POKE into it in a loop.\n");
+    printf("None seen. Map a chunk (OUT 253,5: OUT 252,1) and %s it in a loop.\n", write ? "POKE into" : "PEEK");
 }
 
 // ---- core 0: battery and console ----------------------------------------------
@@ -572,6 +595,7 @@ static void help(void) {
            "  mCB OWN of chunk C = bank B (digits)\n"
            "  v   battery\n"
            "  c   capture a mapped write (and a read): /MREQ /RD /WR /BE ... timing\n"
+           "  C   capture a mapped read, with the data lines (SD0-7) and A7-A0\n"
            "  k   toggle the chunk 0-1 lock (the TS-Pico serves the ROM there)\n"
            "  u   reboot to BOOTSEL\n",
            VERSION, (unsigned long)(clock_get_hz(clk_sys) / 1000000));
@@ -592,7 +616,8 @@ int main(void) {
         case 'r': show_regs(); break;
         case 'l': show_log(); break;
         case 'd': show_diag(); break;
-        case 'c': la_capture(); break;
+        case 'c': la_capture(true); break;
+        case 'C': la_capture(false); break;
         case 'm': {
             // m<c><b>: OWN of chunk c = bank b (digits), from the console
             int c = getchar_timeout_us(2000000) - '0', b = getchar_timeout_us(2000000) - '0';

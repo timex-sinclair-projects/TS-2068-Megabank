@@ -94,7 +94,10 @@ The 2068 was designed for far more memory than it shipped with. The Timex
   claims.
 - **An expansion bank takes a chunk by pulling BE low**, which switches off
   all of the 2068's own memory (HOME, EXROM and DOCK selects) for that
-  access, whatever ports F4h and FFh say.
+  access, whatever ports F4h and FFh say. **Not quite, on a real 2068
+  (board 1, 2026-11-18):** /BE keeps HOME RAM off the bus on a read, but
+  HOME RAM still takes a write. Setting the chunk's bit in F4h stops that
+  ([Sharing the bus](#sharing-the-bus), open question 2).
 - **The bus expansion unit's controller** was to hold, per bank, a
   4-bit-interface "horizontal select" register naming the chunks it owns.
   The TPSG puts its registers on ports FCh (data) and FDh (command). The
@@ -145,7 +148,8 @@ register per bank, only one per chunk:
    any other, so code runs from the banks.
 3. A write (/WR low) stores the byte, unless that chunk is write-protected
    (`WPROT`) or the write-protect switch is on. A refused write is dropped;
-   /BE is still pulled, so it doesn't fall through to the 2068's RAM either.
+   /BE is still pulled. Whether a write also reaches the 2068's own RAM
+   depends on F4h, not /BE: see [Sharing the bus](#sharing-the-bus).
 4. Otherwise the board does nothing: no /BE, data bus untouched.
 
 **The SRAM address** is `page × 8K + A12..A0`, with
@@ -579,7 +583,25 @@ and none of it depends on BUSISO or IOA5:
 - **The v3 card watches the FDh/FCh writes** and stops serving any chunk whose
   owner is 1–253 ([Firmware](#firmware)). Without that, a DOCK chunk would
   have two drivers: /BE switches off the 2068's memory but not the v3 card.
+  Since the HSR rule puts every mapped chunk in DOCK or EXROM, this is not
+  optional. **Measured (2026-11-18):** the v3 card's released firmware (a
+  main build, 2026-11-09) doesn't have it yet; it is on the TS-Pico repo's
+  `megabank-bus-sharing` branch. With that build, a mapped DOCK chunk read
+  back wrong (the card served the DOCK reads); with its DOCK serving
+  switched off (`tsbus.dock(False)` at its REPL) the board's bytes came
+  through.
 - **/BE is open-drain on both cards**, so they never fight electrically.
+- **Software sets the chunk's bit in F4h (HSR) as well as its owner
+  (measured, 2026-11-18).** /BE stops the 2068's memory answering a read, but
+  not HOME RAM taking a write: with the chunk HOME, every write to a mapped
+  bank also lands in the 2068's RAM underneath. With the chunk's HSR bit set,
+  the 2068 sends that chunk to DOCK (or EXROM, by FFh bit 7) and its RAM
+  keeps its byte. So **map = OWNn, then F4h bit n; unmap = F4h bit n clear,
+  then OWNn = 0**, and anything that rewrites F4h (the ROM's
+  `SAVE_STATUS`/`RESTORE_STATUS`, ZXDesk) must keep the bits of owned
+  chunks. Chunks 0-1 hold ROM, where a stray write is harmless anyway. Still
+  to test: the EXROM case (FFh bit 7 set), where the 2068's own EXROM must be
+  kept off reads by /BE.
 - **PicoVideo watches the same writes** and stops copying screen writes into
   its display when chunk 2 or 3 is owned by a bank ([PicoVideo](#picovideo)).
 - **The ROM writes every `OWNn` = 0 at boot**, even though the board clears
@@ -1383,19 +1405,22 @@ reference for what it changes.
    RAM:** after writing 111 into bank 1 and 222 into bank 2 at A000h, the
    2068's own RAM there read 222. So every write to a mapped bank also lands
    in the 2068 RAM underneath it.
-   **It's the 2068, not our timing (2026-11-18, 250 MHz).** The same test
-   gives 111, 222, 222 at 250 MHz. The controller's own capture (console
-   `c`: GP16-GP47 every 8 ns, from PIO2) of a mapped write to chunk 5, in ns
-   from /MREQ falling: BE_REQ and nDOE at +40, the bus's /BE low at +40,
-   /CE1_0 and WINH low at +80, /WR low at +280, /MREQ and /WR high at +560,
-   /BE released at +576 and back high at +640. /BE is down 240 ns before
-   /WR and stays down past the cycle's end, and the 2068's RAM still takes
-   the write: on this 2068, /BE keeps its RAM off the bus on a read but does
-   not stop the write. So the RAM disk's window and the mover must use a
-   chunk whose 2068 RAM may be overwritten, or save and restore it. Still to
-   check: other 2068s (and a TC2068 or TS2068 with a different SCLD
-   revision), and the slow /BE rise (+576 to +640: the pull-up, open
-   question 13) against the next cycle, which here began at +696.
+   **Not our timing (2026-11-18, 250 MHz).** The same test gives 111, 222,
+   222 at 250 MHz. The controller's own capture (console `c`: GP16-GP47
+   every 8 ns, from PIO2) of a mapped write to chunk 5, in ns from /MREQ
+   falling: BE_REQ and nDOE at +40, the bus's /BE low at +40, /CE1_0 and
+   WINH low at +80, /WR low at +280, /MREQ and /WR high at +560, /BE
+   released at +576 and back high at +640. /BE is down 240 ns before /WR,
+   and the 2068's HOME RAM still takes the write.
+   **Answered: set the chunk's HSR bit (2026-11-18).** With `OUT 244,32`
+   (chunk 5 to DOCK) as well, writes reach the board's SRAM and the 2068's
+   RAM keeps its byte (77 before, 77 after). Reads in DOCK then came back
+   wrong (1, 0) until the v3 card's DOCK serving was switched off, after
+   which the whole test passed: 111, 222, 77, and 33 written HOME and read
+   in DOCK. The rule is in [Sharing the bus](#sharing-the-bus). Still open:
+   /BE's slow rise (+576 to +640, the pull-up, open question 13) against
+   the next cycle, which here began at +696; the EXROM case; other 2068s
+   and SCLD revisions; every slot, and PicoVideo fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.
