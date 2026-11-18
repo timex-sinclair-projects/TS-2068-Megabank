@@ -21,6 +21,7 @@
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
 #include "pico/flash.h"
+#include "pico/multicore.h"
 #include "pico/unique_id.h"
 #include "hardware/adc.h"
 #include "hardware/clocks.h"
@@ -110,6 +111,18 @@ static void board_safe_init(void) {
     gpio_pull_down(PIN_GP47);
     adc_init();
     adc_gpio_init(PIN_BAT_ADC);
+}
+
+// True only on the bench: BA0-BA7, nRD_L, nWR_L and nRESET_L all read a
+// steady 0 for 2 ms (floating inputs). A running 2068 holds /RESET high and
+// moves the rest, so the bench SRAM tests never run in one.
+static bool bench_quiet(void) {
+    const uint64_t mask = (0xffull << PIN_BA0) | (1ull << PIN_NRD_L) | (1ull << (PIN_NRD_L + 1)) |
+                          (1ull << PIN_NRESET_L);
+    absolute_time_t end = make_timeout_time_ms(2);
+    while (!time_reached(end))
+        if (gpio_get_all64() & mask) return false;
+    return true;
 }
 
 static void sram_deselect(void) {
@@ -512,10 +525,8 @@ static void test_sram(void) {
         report(R_SKIP, "SRAM", "a retention pattern is waiting to be checked: 'c' first");
         return;
     }
-    uint64_t in = gpio_get_all64();
-    bool lo = !((in >> PIN_BA0) & 0xff) && !((in >> PIN_NRD_L) & 1) && !((in >> (PIN_NRD_L + 1)) & 1);
-    if (!lo) {
-        report(R_SKIP, "SRAM", "BA0-BA7, nRD_L and nWR_L must all read 0 (see 'i')");
+    if (!bench_quiet()) {
+        report(R_SKIP, "SRAM", "bench only: BA0-BA7, nRD_L, nWR_L, nRESET_L must read a steady 0 (in a 2068?)");
         return;
     }
     sd_release();
@@ -603,10 +614,7 @@ static float cell_volts(void) {
     return v;
 }
 
-static bool sram_bench_ready(void) {
-    uint64_t in = gpio_get_all64();
-    return !((in >> PIN_BA0) & 0xff) && !((in >> PIN_NRD_L) & 1) && !((in >> (PIN_NRD_L + 1)) & 1);
-}
+static bool sram_bench_ready(void) { return bench_quiet(); }
 
 static void keep_write(void) {
     heading("Retention: write");
@@ -670,6 +678,170 @@ static bool keep_check(void) {
     return true;
 }
 
+// ---- bus monitor (in a 2068) --------------------------------------------------
+
+// Passive: core 1 samples every GPIO in a tight loop and classifies Z80 cycles
+// by their strobes; nothing is driven. Each /MREQ or /IORQ cycle is counted
+// once, when its strobe is first seen low with /RD, /WR, /RFSH or /M1. The
+// counts are approximate (a short cycle can fall between samples) but show
+// that every buffered line is alive and that port decode would see FCh/FDh.
+
+#define BIT(p) (1ull << (p))
+#define M_MREQ  BIT(PIN_NMREQ_L)
+#define M_IORQ  BIT(PIN_NMREQ_L + 1)
+#define M_RD    BIT(PIN_NRD_L)
+#define M_WR    BIT(PIN_NRD_L + 1)
+#define M_RFSH  BIT(PIN_NRD_L + 2)
+#define M_M1    BIT(PIN_NRD_L + 3)
+#define M_RESET BIT(PIN_NRESET_L)
+#define M_BE    BIT(PIN_NBE_L)
+#define M_INT   BIT(PIN_NINT_L)
+#define M_NMI   BIT(PIN_NNMI_L)
+#define M_ADDR  ((0xffull << PIN_BA0) | (7ull << PIN_BA13))
+
+typedef struct {
+    uint32_t us, samples, reset_low;
+    uint32_t int_n, nmi_n, be_n, m1_n;
+    uint32_t mrd, mwr, rfsh, chunk_rd[8], chunk_wr[8];
+    uint32_t io_in, io_out, intack, port_in[256], port_out[256];
+    uint64_t toggled;
+} bus_stats_t;
+
+static bus_stats_t bus_st;
+
+static void __not_in_flash_func(bus_window)(void) {
+    // Everything but /BE, /INT and /NMI is in GPIO0-31: one 32-bit read per
+    // sample, the high bank (GPIO32-47) once per pass as well.
+    bus_stats_t *st = &bus_st;
+    memset(st, 0, sizeof *st);
+    const uint32_t MREQ = 1u << PIN_NMREQ_L, IORQ = MREQ << 1, RD = 1u << PIN_NRD_L, WR = RD << 1,
+                   RFSH = RD << 2, M1 = RD << 3, RESET = 1u << PIN_NRESET_L;
+    const uint32_t BE = 1u << (PIN_NBE_L - 32), INT = 1u << (PIN_NINT_L - 32), NMI = 1u << (PIN_NNMI_L - 32);
+    uint32_t prev = sio_hw->gpio_in, prev_hi = sio_hw->gpio_hi_in;
+    uint32_t tog = 0, tog_hi = 0;
+    bool in_mem = false, in_io = false;
+    uint32_t t0 = time_us_32(), n = 0;
+    for (;;) {
+        uint32_t s = sio_hw->gpio_in, hi = sio_hw->gpio_hi_in;
+        uint32_t fell = prev & ~s, fell_hi = prev_hi & ~hi;
+        tog |= prev ^ s;
+        tog_hi |= prev_hi ^ hi;
+        prev = s;
+        prev_hi = hi;
+        n++;
+        if (fell_hi) {
+            if (fell_hi & INT) st->int_n++;
+            if (fell_hi & NMI) st->nmi_n++;
+            if (fell_hi & BE) st->be_n++;
+        }
+        if (fell & M1) st->m1_n++;
+        if (!(s & RESET)) st->reset_low++;
+        if (!(s & MREQ)) {
+            if (!in_mem) {
+                if (!(s & RFSH)) { st->rfsh++; in_mem = true; }
+                else if (!(s & RD)) { st->mrd++; st->chunk_rd[(s >> PIN_BA13) & 7]++; in_mem = true; }
+                else if (!(s & WR)) { st->mwr++; st->chunk_wr[(s >> PIN_BA13) & 7]++; in_mem = true; }
+            }
+        } else {
+            in_mem = false;
+        }
+        if (!(s & IORQ)) {
+            if (!in_io) {
+                if (!(s & M1)) { st->intack++; in_io = true; }
+                else if (!(s & RD)) { st->io_in++; st->port_in[(s >> PIN_BA0) & 0xff]++; in_io = true; }
+                else if (!(s & WR)) { st->io_out++; st->port_out[(s >> PIN_BA0) & 0xff]++; in_io = true; }
+            }
+        } else {
+            in_io = false;
+        }
+        if ((n & 1023) == 0 && time_us_32() - t0 >= 1000000) break;
+    }
+    st->us = time_us_32() - t0;
+    st->samples = n;
+    st->toggled = tog | (uint64_t)tog_hi << 32;
+}
+
+// Commands by flag, not the SIO FIFO: the FIFO belongs to the multicore
+// lockout that flash_safe_execute uses to park this core.
+static volatile bool bus_go, bus_done;
+
+static void __not_in_flash_func(core1_main)(void) {
+    multicore_lockout_victim_init();
+    for (;;) {
+        while (!bus_go) tight_loop_contents();
+        bus_go = false;
+        bus_window();
+        __dmb();
+        bus_done = true;
+    }
+}
+
+static void top_ports(const char *label, const uint32_t *ports) {
+    printf("    %s:", label);
+    bool used[256] = {0};
+    for (int k = 0; k < 5; k++) {
+        int best = -1;
+        for (int p = 0; p < 256; p++)
+            if (!used[p] && ports[p] && (best < 0 || ports[p] > ports[best])) best = p;
+        if (best < 0) break;
+        used[best] = true;
+        printf(" %02Xh x%lu", best, ports[best]);
+    }
+    printf("   FCh x%lu FDh x%lu\n", ports[0xfc], ports[0xfd]);
+}
+
+static void bus_monitor(int windows) {
+    heading("Bus monitor (passive, 1 s windows)");
+    printf("  In BASIC, try: OUT 252,2: OUT 253,2: PRINT IN 252, IN 253\n");
+    uint64_t toggled = 0;
+    uint32_t fc_out = 0, fd_out = 0, fc_in = 0, fd_in = 0;
+    bool reset_seen_high = false;
+    uint32_t int_min = UINT32_MAX, int_max = 0;
+    for (int w = 0; w < windows; w++) {
+        bus_done = false;
+        __dmb();
+        bus_go = true;
+        while (!bus_done) tight_loop_contents();
+        __dmb();
+        const bus_stats_t *st = &bus_st;
+        toggled |= st->toggled;
+        fc_out += st->port_out[0xfc]; fd_out += st->port_out[0xfd];
+        fc_in += st->port_in[0xfc]; fd_in += st->port_in[0xfd];
+        if (st->reset_low < st->samples) reset_seen_high = true;
+        if (st->int_n < int_min) int_min = st->int_n;
+        if (st->int_n > int_max) int_max = st->int_n;
+        printf("\n  window %d: %lu samples (%lu ns each), /RESET low %lu%%\n", w + 1, st->samples,
+               st->us * 1000 / (st->samples ? st->samples : 1), st->reset_low * 100 / (st->samples ? st->samples : 1));
+        printf("    /INT %lu  /NMI %lu  /BE %lu  /M1 %lu\n", st->int_n, st->nmi_n, st->be_n, st->m1_n);
+        printf("    mem rd %lu wr %lu rfsh %lu   rd by chunk:", st->mrd, st->mwr, st->rfsh);
+        for (int c = 0; c < 8; c++) printf(" %lu", st->chunk_rd[c]);
+        printf("\n    io in %lu out %lu intack %lu\n", st->io_in, st->io_out, st->intack);
+        top_ports("in ", st->port_in);
+        top_ports("out", st->port_out);
+        if (getchar_timeout_us(0) != PICO_ERROR_TIMEOUT) break;
+    }
+    printf("\n");
+    report(reset_seen_high ? R_PASS : R_FAIL, "/RESET", "%s", reset_seen_high ? "high: the 2068 is running" : "held low the whole time");
+    report(int_min >= 55 && int_max <= 65 ? R_PASS : R_FAIL, "/INT", "%lu-%lu per second (expect 60)", int_min, int_max);
+    static const struct { uint pin; const char *name; } lines[] = {
+        {8, "BA0"}, {9, "BA1"}, {10, "BA2"}, {11, "BA3"}, {12, "BA4"}, {13, "BA5"}, {14, "BA6"}, {15, "BA7"},
+        {16, "BA13"}, {17, "BA14"}, {18, "BA15"}, {19, "nMREQ"}, {20, "nIORQ"}, {21, "nRD"}, {22, "nWR"},
+        {23, "nRFSH"}, {24, "nM1"},
+    };
+    char dead[128] = "";
+    int o = 0, nd = 0;
+    for (unsigned i = 0; i < count_of(lines); i++)
+        if (!(toggled & BIT(lines[i].pin))) {
+            o += snprintf(dead + o, sizeof dead - o, " %s", lines[i].name);
+            nd++;
+        }
+    report(nd ? R_FAIL : R_PASS, "lines", nd ? "never moved:%s" : "BA0-BA7, BA13-BA15 and the six strobes all moved", dead);
+    report(R_INFO, "/BE", "%s", toggled & M_BE ? "moved (the TS-Pico serving HOME/EXROM)" : "never moved");
+    report(fc_out && fd_out ? R_PASS : R_LOOK, "FCh/FDh",
+           "OUT seen %lu/%lu times, IN %lu/%lu (nothing answers yet: no controller firmware)", fc_out, fd_out,
+           fc_in, fd_in);
+}
+
 // ---- main -------------------------------------------------------------------
 
 static void run_auto(void) {
@@ -699,6 +871,7 @@ static void help(void) {
            "  m       SRAM probe (not a memory test)\n"
            "  t       SRAM page test (bench: one byte per page)\n"
            "  k c     retention: write a pattern (then unplug), check it\n"
+           "  z [n]   bus monitor in a 2068, n 1 s windows (default 5; a key stops it)\n"
            "  u       reboot to BOOTSEL (USB drive)\n"
            "  h       this help\n");
 }
@@ -706,6 +879,9 @@ static void help(void) {
 int main(void) {
     board_safe_init();
     stdio_init_all();
+    // Core 1 waits for the bus monitor; started now, since flash_safe_execute
+    // needs it running as a lockout victim once pico_multicore is linked.
+    multicore_launch_core1(core1_main);
 
     for (;;) {
         while (!stdio_usb_connected()) sleep_ms(100);
@@ -733,6 +909,12 @@ int main(void) {
             case 'm': probe_sram(); break;
             case 't': test_sram(); break;
             case 'k': keep_write(); break;
+            case 'z': {
+                int w = 5;
+                sscanf(line + 1, "%d", &w);
+                bus_monitor(w < 1 ? 1 : w > 60 ? 60 : w);
+                break;
+            }
             case 'c':
                 if (!keep_check()) printf("No retention pattern written ('k' writes one).\n");
                 break;

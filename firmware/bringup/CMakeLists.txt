@@ -18,6 +18,7 @@ target_link_libraries(bringup
 	pico_stdlib
 	pico_unique_id
 	pico_flash
+	pico_multicore
 	hardware_adc
 	hardware_flash
 )
