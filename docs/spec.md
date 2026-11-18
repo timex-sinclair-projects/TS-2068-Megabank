@@ -597,7 +597,10 @@ slot's /BE goes to the BUSISO pin (B30) of the slot before it, and to that
 slot's /BE only through a slide switch: SW2 joins slot 2's /BE to slot 1's,
 SW3 slot 3's to slot 2's, SW4 the legacy connector's to slot 3's. With a
 switch open, a card further out pulls only the nearer card's BUSISO, and
-never reaches the 2068. So:
+never reaches the 2068. That is the extender's design: a card behind the
+TS-Pico asserts /BE into the TS-Pico's BUSISO, and the TS-Pico sees it and
+gets out of the way. The v3 card doesn't connect BUSISO, so with v3 that
+path does nothing; the owner table does its job instead. So:
 
 - **A card that drives /BE must be in slot 1, or every switch between it
   and slot 1 must be closed.** The v3 card goes in slot 1; this board in
@@ -1372,6 +1375,18 @@ reference for what it changes.
    already wins this race on a 2068; the board's must too. Also measured: how
    the page bits are produced (a second PIO table, a DMA-chained lookup or
    core 1), and that they settle well inside the read.
+   **First results (2026-11-18, board 1, slot 2 with SW2 closed, v3 card in
+   slot 1, 150 MHz):** /BE from the `be` PIO table and the page bits from a
+   DMA-chained lookup (`firmware/controller/`). Reads from a bank in chunk 5
+   come from the board's SRAM, and two banks hold different bytes at the
+   same address. **But /BE does not stop a write reaching the 2068's own
+   RAM:** after writing 111 into bank 1 and 222 into bank 2 at A000h, the
+   2068's own RAM there read 222. So every write to a mapped bank also lands
+   in the 2068 RAM underneath it. Not yet known: whether that's this
+   2068's SCLD (/BE gating only the read path) or our /BE arriving too late
+   for a write; a scope on /BE, /MREQ and /WR settles it. If it's the SCLD,
+   the RAM disk's window and the mover must use a chunk whose 2068 RAM may
+   be overwritten, or save and restore it. Timing on a scope is still to do.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.

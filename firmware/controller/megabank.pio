@@ -1,0 +1,114 @@
+; Megabank controller: the bus programs (docs/spec.md, "The controller").
+;
+; The board's data path is hardware: on a memory cycle the bytes go between
+; the SRAM and the Z80 through U3, whose direction follows /RD. The controller
+; only decides, per cycle, whether to answer (/BE and U3's enable, `be`) and
+; which page the SRAM sees (`page`), and it answers IN/OUT at FCh/FDh (`io`).
+;
+; PIO0 (GPIO base 0): `be` at offset 0 (its chunk table must be instructions
+; 0-7), `io` at offset 16. Both side-set GP26 nDOE; `be` also GP27 BE_REQ.
+; They never overlap in time (a memory cycle and an I/O cycle can't), and
+; neither side-sets on a wait it idles in, so they don't fight over nDOE.
+; PIO1 (GPIO base 16): `page`, out pins GP28-GP38, fed by a DMA chain.
+;
+; Programs use `wait gpio` only on PIO0, where the base is 0 and GPIO numbers
+; are absolute; `page` on PIO1 waits on `pin`, relative to its in_base.
+
+; -----------------------------------------------------------------------------
+; be (PIO0, offset 0): on each memory cycle that isn't a refresh, jump through
+; the chunk table on A15-A13. Core 1 patches entry n to `ours` when the board
+; owns chunk n, else to `idle`. `ours` asserts /BE and turns U3 on for the
+; whole cycle.
+;
+; in_base GP16 (A15-A13 in the low bits of `mov osr, pins`); jmp pin GP23
+; (/RFSH); side-set GP26 nDOE (bit 0), GP27 BE_REQ (bit 1).
+; -----------------------------------------------------------------------------
+.program be
+.side_set 2 opt
+    jmp idle                                ; chunk 0
+    jmp idle                                ; chunk 1
+    jmp idle                                ; chunk 2
+    jmp idle                                ; chunk 3
+    jmp idle                                ; chunk 4
+    jmp idle                                ; chunk 5
+    jmp idle                                ; chunk 6
+    jmp idle                                ; chunk 7
+.wrap_target
+public entry:
+    wait 0 gpio 19                          ; /MREQ low
+    jmp pin decode                          ; /RFSH high: a read or a write
+public idle:
+    wait 1 gpio 19                          ; a refresh, or not ours: let it end
+    jmp entry
+decode:
+    mov osr, pins                           ; A15-A13 from GP16-18
+    out pc, 3                               ; through the table
+public ours:
+    wait 1 gpio 19          side 0b10       ; /BE on, U3 on until /MREQ rises
+    nop                     side 0b01       ; U3 off, /BE off
+.wrap
+
+; -----------------------------------------------------------------------------
+; io (PIO0, offset 16): every I/O cycle goes to core 1, which answers with a
+; handler address (and a reply byte above it): `reply` for IN FCh/FDh,
+; `capture` for OUT FCh/FDh, `done` for everything else. If core 1 answers
+; after /IORQ has already risen, the answer is dropped.
+;
+; Words pushed: a request is the 25 pins GP0-GP24 (SD, A7-A0, A15-A13,
+; /MREQ /IORQ /RD /WR /RFSH /M1); /MREQ (bit 19) is always high in an I/O
+; cycle. Captured data comes in bits 24-31 with bit 19 clear.
+;
+; in_base GP0, out_base GP0 (8 pins, SD), jmp pin GP20 (/IORQ); side-set
+; GP26 nDOE. ISR shifts left, OSR right, no autopush or autopull.
+; -----------------------------------------------------------------------------
+.program io
+.side_set 1 opt
+.wrap_target
+public top:
+    wait 0 gpio 20          [7]             ; /IORQ low; /RD or /WR with it
+    in pins, 25
+    push block
+    pull block                              ; from core 1: handler | byte << 5
+    jmp pin top                             ; /IORQ high already: too late, drop
+    out pc, 5
+public reply:
+    mov pindirs, ~null                      ; SD0-SD7 out
+    out pins, 8             side 0          ; the byte; U3 on (/RD low: SD to Z80)
+    wait 1 gpio 20
+    mov pindirs, null       side 1          ; U3 off, SD released
+    jmp top
+public capture:
+    nop                     side 0 [7]      ; U3 on (/RD high: Z80 to SD)
+    in pins, 8              side 1          ; the byte; U3 off
+    in null, 24
+    push block
+public done:
+    wait 1 gpio 20
+.wrap
+
+; -----------------------------------------------------------------------------
+; page (PIO1, GPIO base 16): on each memory cycle that isn't a refresh, push
+; the address of the chunk's entry in the page table (X holds the table's
+; address >> 5); a DMA chain reads the entry back into the TX FIFO. The entry
+; goes out on GP28-GP38: nCE1_0, nCE1_1, PA13-PA20, WINH. When /MREQ rises,
+; all eleven go high: both SRAMs deselected, Z80 writes inhibited.
+;
+; in_base GP16 (pin 0-2 A15-A13, pin 3 /MREQ); jmp pin GP23 (/RFSH);
+; out_base GP28, 11 pins. ISR shifts left, OSR right.
+; -----------------------------------------------------------------------------
+.program page
+.wrap_target
+    wait 0 pin 3                            ; /MREQ low
+    jmp pin lookup                          ; /RFSH high
+    jmp settle                              ; a refresh: the SRAM stays idle
+lookup:
+    mov isr, x
+    in pins, 3                              ; A15-A13
+    in null, 2                              ; a word address
+    push block                              ; to the DMA chain
+    pull block                              ; the entry
+    out pins, 11
+settle:
+    wait 1 pin 3                            ; /MREQ high
+    mov pins, ~null
+.wrap
