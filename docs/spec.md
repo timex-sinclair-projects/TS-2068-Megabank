@@ -1563,8 +1563,8 @@ hardware: neither this board nor the v3 card can run bus cycles.
 **Run on hardware (2026-11-19)** on a v3 card in a 2068 with the board:
 ROM 2.5 in flash slot 1, firmware `40cd82d` (tspico-firmware-build#430),
 `tools/hwcheck.py --megabank-channels` with `basic/SD/TAP/test/mbchan.bas`
-and `mbchpg.bas` (the same programs pass in ZEsarUX). **39 passed, 1
-failed, 2 for information:**
+and `mbchpg.bas` (the same programs pass in ZEsarUX). **All 40 passed**
+(NEW on a repeat), **2 for information:**
 
 - Steps 1, 2, 3, 4 and 7: all 32 automatic tests pass. That covers every
   mode, records with `TAB` both ways, Q for a record overflow, `TAB 0` with
@@ -1575,11 +1575,10 @@ failed, 2 for information:**
   `f:` and `r:` open together close cleanly in all six orders, and `LLIST`
   into `OPEN #3,"r:list"` hands P back at `CLOSE #3`.
 - Step 5: a reset and a power-off each keep the file to its last CR, and
-  `ERASE` works after both. **NEW** left `nw` at 10 bytes, not 5: exactly
-  `kept` CR `lost` CR, as if the second `PRINT #` had no trailing `;`.
-  To repeat before calling it a bug: the firmware takes a stale slot's
-  length from the slot, which the ROM writes back only at a CR or a page
-  boundary.
+  `ERASE` works after both. **NEW** keeps `nw` at 5 bytes (`kept` and its
+  CR, not the unterminated `lost`), and `ERASE` works. The first try gave
+  10 bytes, `kept` CR `lost` CR, which is what the second `PRINT #`
+  without its trailing `;` gives; typed again with it, 5.
 - Step 6: with the switch on, `PRINT #4;"two"` stops with J, and `CLOSE #4`
   with the switch off is 0 OK. But `wp` is then **8 bytes**, `one` CR `two`
   CR: CLOSE passes the ROM's own length, which counted the bytes the board
@@ -1655,8 +1654,8 @@ reference for what it changes.
    own `ramdisk.Disk`), the firmware's host tests (`ramdisk_hosttest.py`,
    78/78) and ZEsarUX end to end (`tools/emu/megabank_smoke.py`, 54/54).
    **On hardware (2026-11-19):** every Channels testing step on a v3 card
-   with ROM 2.5 and firmware `40cd82d`, 39 passed, 1 to check (NEW), with a
-   character costing about 4.3 ms ([Testing](#testing), Channels).
+   with ROM 2.5 and firmware `40cd82d`, all 40 passed (NEW on a repeat),
+   with a character costing about 4.3 ms ([Testing](#testing), Channels).
 
 ## Open questions
 
