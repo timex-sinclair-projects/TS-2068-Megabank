@@ -589,7 +589,10 @@ and none of it depends on BUSISO or IOA5:
   (the card served the DOCK reads); with its DOCK serving switched off
   (`tsbus.dock(False)` at its REPL) the board's bytes came through. With the
   yield (TS-Pico main `d5be583`, its `tsbus.stats()` showing `mb_owned`) and
-  DOCK serving on, the test passes: 111, 222, 77.
+  DOCK serving on, the test passes: 111, 222, 77. The same build also
+  yields chunks 0 and 1, where it serves its HOME ROM: banks mapped there
+  (with interrupts off) read and write, run code, and give the ROM back
+  when unmapped.
 - **/BE is open-drain on both cards**, so they never fight electrically.
 - **Software sets the chunk's bit in F4h (HSR) as well as its owner
   (measured, 2026-11-18).** /BE stops the 2068's memory answering a read, but

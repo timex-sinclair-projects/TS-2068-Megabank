@@ -35,8 +35,9 @@ it shows the data lines on the SRAM's side of U3 (SD0-SD7) and A7-A0, but
 not WINH or the bus's /BE.
 
 **Chunks 0 and 1 are locked** by default: the TS-Pico serves HOME and EXROM
-there with its own /BE. Its firmware now yields chunks the board owns (main
-`d5be583`), but mapping chunks 0-1 hasn't been tested. OWN0/OWN1 read back what was written; the board
+there with its own /BE. With firmware that yields chunks the board owns
+(TS-Pico main `d5be583`) they map cleanly (Results); the lock stays for
+cards on older firmware. OWN0/OWN1 read back what was written; the board
 never answers there. `k` toggles the lock.
 
 Not yet: `BASE` and `SIZE` from flash (fixed at 1 and 64); the battery bit
@@ -120,6 +121,11 @@ slot 2, SW2 closed):
   board owns, and its DOCK serving on: 111, 222, 77 (`mbdock.tap`, loaded
   from its SD card). Its `tsbus.stats()` showed `mb_owned` 32 with chunk 5
   mapped.
+- Chunks 0 and 1, over the ROM (`basic/mbrom.bas`, `k` to unlock; machine
+  code at 50000 with interrupts off): in each, bank 1 and bank 2 kept 111
+  and 222, a CALL to a RET in the bank returned (an opcode fetch from the
+  board), and after unmapping the address read the ROM's byte again,
+  matching PEEK. The v3 card yielded its HOME ROM chunks as well as DOCK.
 - A first try of that gave 14 or 78 for both reads: the board had stopped
   answering anything. With the 2068 off and the board on USB, every bus
   line reads low; `io` pushed that as an I/O cycle, core 1 took the word for
