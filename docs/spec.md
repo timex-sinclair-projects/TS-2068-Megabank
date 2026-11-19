@@ -711,31 +711,57 @@ for the whole session, not only at boot:
 
 ### Minimal ROM: detection, reset, mover, `r:` (phase 4)
 
-1. **Replace the bank search.** A `JP` at X0A3E to new code frees the old
-   search's body, X0A3E–X0DAF: 882 bytes in EXROM chunk 0, which today has
-   about 84 bytes free. It is entered two ways, both landing at X0A3E: `CALL 0A3E`
-   at X1CA8 (the boot path taken when D is held at power-on, undocumented
-   until now) and the fall-through from X09F4, which reads the DOCK's
-   LROS/AROS headers on the normal path. The block X0C4C–X0CFA is reachable only
-   from HOME 2487h, which nothing calls. (To verify when patching: no other
-   entry into the range.) The new code:
-   - writes `OWN0`–`OWN7` = 0 and `WPROT` = 0, so every device watching the bus
-     starts in step;
-   - checks `ID`/`IDCOMP`, reads `BASE`, `SIZE` and `STATUS`;
-   - reports them to the TS-Pico (how: open question 3);
+**Built** (2026-11-19) in tspico-firmware-build as a separate test ROM,
+`tools/build-rom.py --megabank` → `src/rom/TSPICO-MB.ROM`, **ROM 2.5**
+(`PEEK 101` = 37, ROM_ID 25h). The release ROM, 2.4, is byte-for-byte
+unchanged and stays in flash slot 1 until the board passes its hardware
+tests. The wire format is in that repo's `docs/PROTOCOL.md` §6.3; the code
+in `src/rom/fdd/fddcmd.asm` under `IFDEF MEGABANK`, documented in
+`docs/reference/rom/exrom-fdd.md`. Decisions taken on the way:
+
+1. **The bank search is replaced** by `JP MB_BOOT` at X0A3E (the patch states
+   the bytes it replaces, `2A BC 5C`). Checked: nothing enters X0A3F–X0DAF
+   from outside. X1CA8's `CALL 0A3E` (the D-key path) and X09F4's
+   fall-through both land on X0A3E itself; X0057's `JP 0D31` is in the
+   11 bytes X1CAE copies to RAM 6000h, and runs after `OUT (F4h),0`, so it
+   reaches HOME 0D31h; X0CFB, the renumbering, is called only from inside
+   the range. `MB_BOOT`:
+   - writes `OWN7`…`OWN0` = 0 and `WPROT` = 0;
+   - **reads nothing and reports nothing** (open question 3, below): the boot
+     stays as fast as before and the firmware asks when it needs to know;
    - leaves `MAXBNK` and 6315h at 0;
-   - ends as the old code did: `CALL 2082h` (writes SYSCON's 80h end marker).
-     The old code also called the renumbering at X0CFB, which does nothing with
-     no banks; keep or drop it once checked.
-2. **The mover** ([The RAM disk](#the-ram-disk)): the operation loop, the
-   window choice and the copy loops, in EXROM chunk 1's free space
-   (23D4h–2FFFh, 3116 bytes, and 37B5h–3FFFh, 2123 bytes). Estimated under 512
-   bytes.
-3. **The `r:` prefix**: a test in `F_HOOK` (`fddcmd.asm` 585) beside the
-   `f:` one, a new TPMODE bit (bits 7 and 6 are `tpi:` and `net:`), and the
-   tape block routines calling the mover when it is set. `CAT`, `ERASE`,
-   `MOVE` and `FORMAT` already reach the firmware as `tpi:` strings, so `r:`
-   names need firmware work only.
+   - jumps to X2082 with HL = (SYSCON) + 0Dh, as the old code's `CALL 2082h`
+     did (SYSCON's 80h end marker, then CLEAR-PRB).
+   - **The renumbering call (X0CFB) is dropped**: with no banks it only
+     cleared the two counts and probed again.
+   The old body, X0A41–X0DAF, is left as unreachable bytes.
+2. **The mover** is function **89h**, a response function like 81h–88h: the
+   firmware answers a command with 89h and then operations, so the mover
+   needs no command of its own and works inside any `tpi:` exchange. The
+   chain's last test, X2213 (2.4's `CP 87h / JP Z,3006h`), is `JP FN_EXT`,
+   which keeps 88h and adds 89h. It sits after the 2.4 module, at
+   3998h–3E09h (the module, the `r:` code and the mover together, 1138
+   bytes; 502 left to 3FFFh). The free space at 23D4h–2FFFh is untouched;
+   the 37B5h–3FFFh figure above was ROM 2.3's, and ROM 2.4's module now
+   runs to 3997h. Its operations, as built, are in
+   [The mover's operations](#the-movers-operations).
+3. **The `r:` prefix** is tested in `F_HOOK` beside `f:` (same size, through
+   `FR_TEST`). It sets **TPMODE bit 5** (unused: SESSION_SETUP and F_HOOK
+   already clear bits 4–5 on every SAVE/LOAD statement) and opens the file
+   with `tpi:ropen name`. The tape block entries, X0068 (`SA_BYTES`) and
+   X00FC (`LD_BYTES`), jump to `R_SA`/`R_LD`, which go on to the TS-Pico's
+   block code unchanged when bit 5 is clear. When it is set each block is
+   one command, `tpi:rblk` with its address and length (PMR1 = SAVE, LOAD
+   or VERIFY, PMR2 = the flag byte), and the firmware moves the bytes with
+   the mover, then answers with a status: 2 = R (a VERIFY that differs),
+   3 = F, and so on. Bit 5 is cleared after the data block and on any
+   error, so the next SAVE or LOAD goes to the card.
+
+Tested in a Z80 interpreter against a board model that enforces the HSR
+rule (`src/test/rom_megabank_hosttest.py`, in CI), and end to end in
+ZEsarUX's Megabank model with a stand-in RAM disk
+(`tools/emu/megabank_smoke.py`; ZEsarUX ignores the HSR, see
+[Testing](#testing)). Not yet run on hardware.
 
 ### The Timex bank API on the board (phase 8)
 
@@ -824,33 +850,51 @@ speed. So:
 
 ### The mover's operations
 
-The firmware sends an operation; the ROM does it and replies with a status
-byte. All lengths are 1–65535; "page:offset" is an 8K page (0–511) and an
-offset into it, and a transfer may cross pages.
+As built (phase 4). The firmware sends function 89h and then operations;
+the ROM does each and replies with a status byte, then waits for READY
+before reading the next. Words are little-endian; "page:offset" is an 8K
+page counted from `BASE` (0–511) and an offset into it (0–1FFFh). A transfer
+may cross pages and, on the 2068 side, chunks.
 
-| Op | Does | Used by |
-|---|---|---|
-| 1 | Copy *len* bytes of 2068 memory at *addr* to page:offset | SAVE |
-| 2 | Copy page:offset to 2068 memory at *addr* | LOAD, MERGE |
-| 3 | Compare page:offset with 2068 memory at *addr*; reply with the result | VERIFY |
-| 4 | Send page:offset to the TS-Pico through port 0Eh | reading the directory; MOVE from `r:`; backup |
-| 5 | Receive bytes from the TS-Pico into page:offset | writing the directory; MOVE to `r:`; restore |
-| 6 | Copy page:offset to page:offset (both on the board) | compaction |
-| 0 | Done; carries the report code to end the command with (0 = OK) | every command |
+| Op | Parameters | Does | Reply | Used by |
+|---|---|---|---|---|
+| 1 | addr, len, page, off | copy 2068 memory at *addr* to page:offset | 1 | SAVE |
+| 2 | addr, len, page, off | copy page:offset to 2068 memory at *addr* | 1 | LOAD, MERGE |
+| 3 | addr, len, page, off | compare | 1 same, 2 differ | VERIFY |
+| 4 | len, page, off | send page:offset to the TS-Pico, then the bytes' XOR | 1 | reading the directory; MOVE from `r:`; backup |
+| 5 | len, page, off | receive *len* bytes and their XOR into page:offset | 1, 5 XOR wrong | writing the directory; MOVE to `r:`; restore |
+| 6 | len, page, off, page2, off2 | copy page:offset to page2:off2 (forwards) | 1 | compaction |
+| 7 | — | send found (1/0), `BASE`, `SIZE`, `STATUS` | `VERSION` | `tpi:ram`, and the firmware learning about the board (open question 3) |
+| 0 | — | done: the next byte is the command's answer, a status (1 = OK, 2 = R, 3 = F, …) or another response function | — | every command |
+
+Replies 3 (no board) and 4 (outside the board: offset ≥ 2000h, or past its
+last page) refuse an operation without losing step: a refused op 4 still
+sends *len* zeros and a zero XOR, a refused op 5 still reads its bytes. An
+op of 8 or more ends the mover with Report J. Bytes cross port 0Eh about
+75–90 µs apart, unhandshaked, as a LOAD block's do.
 
 **How the mover maps a page.** For each piece of a transfer that lies in one
-8K chunk of 2068 memory, it picks a **window chunk** from 4–7 that holds
-neither that piece nor the stack. With four candidates and at most two
-excluded, one is always free. Then, with interrupts off:
+8K chunk of 2068 memory and one board page, it picks a **window chunk**, the
+first of 4–7 that holds neither the piece's 2068 address nor the stack
+(SP − 32 to SP + 48, its own frame included); op 6 takes two windows. With
+four candidates and at most three excluded, one is always free. With
+interrupts off for the whole operation:
 
-1. Save `OWNw` and `SUBw` (read back through FCh).
-2. Map the page: `OWNw` = its bank, `SUBw` = its 8K.
-3. `LDIR` (or `CPIR`-style compare, or `INIR`/`OTIR`-style port transfer).
-4. Restore `OWNw` and `SUBw`, re-enable interrupts.
+1. Save `OWNw`, `SUBw` (read back through FCh) and the HSR (F4h).
+2. Map the page: `OWNw` = its bank, `SUBw` = its 8K, **then set HSR bit w**:
+   /BE keeps HOME RAM off a read, but a write to an owned chunk still lands
+   in HOME RAM unless the chunk's HSR bit is set (measured on the board).
+3. `LDIR`, a compare loop, or a port loop.
+4. Put back what was there: the HSR bit first if the chunk was the 2068's
+   own, then `OWNw` and `SUBw`, then the HSR. A program's own page mapped in
+   the window chunk comes back with its HSR bit. The interrupt state is
+   restored (`LD A,I`), not forced on.
 
 The mover runs from EXROM chunks 0–1 and never maps a window there, so it
-never unmaps itself. It doesn't depend on the Timex bank API, so the RAM disk
-can ship before that API is fixed ([Phases](#phases)).
+never unmaps itself; for the same reason addresses below 4000h are the
+EXROM's while it runs, not HOME's. It doesn't depend on the Timex bank API,
+so the RAM disk can ship before that API is fixed ([Phases](#phases)).
+There is no BREAK test inside an operation.
 
 ### From BASIC
 
@@ -1321,9 +1365,16 @@ hardware: neither this board nor the v3 card can run bus cycles.
    `MEGABANK_SIZE` and `MEGABANK_WP` configure it. `tspico/megabank_test.py`
    checks it over ZRCP on the stock ROM, in CI. Not modelled: timing, the
    battery-low bit, snapshots. Note for test scripts: ZEsarUX's hard reset
-   does nothing on a TS-2068; use its plain reset (`reset-cpu`).
+   does nothing on a TS-2068; use its plain reset (`reset-cpu`). **Also not
+   modelled: the HSR rule.** The model treats an owned chunk as the
+   board's whatever F4h says, so a write that would leak into HOME RAM on
+   hardware (HSR bit clear) passes there.
 4. **ROM host tests** for the mover's window choice and the boot-time
-   detection, in the style of the existing `rom_*_hosttest.py`.
+   detection, in the style of the existing `rom_*_hosttest.py`. **Done
+   (phase 4):** `src/test/rom_megabank_hosttest.py` runs the boot reset,
+   every mover operation and the `r:` gates in a Z80 interpreter against a
+   board model that does enforce the HSR rule, and fails on any write it
+   would leak.
 5. **Firmware host tests** for the file system: format, save/load/erase,
    fragmentation and compaction, a corrupt superblock, the generation counter.
 6. **The controller's firmware** on an RP2350B development board, with the
@@ -1376,6 +1427,9 @@ reference for what it changes.
    and on a v3 card with no board (nothing changes until something writes
    FDh/FCh).
 4. **ROM: detection, boot reset and the mover**, plus the `r:` hook.
+   **Built (2026-11-19)** as test ROM 2.5 in tspico-firmware-build
+   ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)); hardware tests
+   to come.
 5. **Firmware: the RAM disk** and `tpi:ram`.
 6. **PicoVideo** update (its own repo).
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
@@ -1449,8 +1503,15 @@ reference for what it changes.
    Still open: other 2068s and SCLD revisions; slot 3, and PicoVideo
    fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
-   or a field in an existing boot exchange. Decided when the ROM work starts,
-   with `docs/PROTOCOL.md`.
+   or a field in an existing boot exchange. **Proposed (phase 4): it
+   doesn't; the firmware asks.** Mover op 7 returns found, `BASE`, `SIZE`,
+   `STATUS` and `VERSION`, so the firmware learns about the board the first
+   time an `r:` or `tpi:ram` command needs it, from inside that command's
+   answer, gated on the pre-header's ROM_ID (25h or later). The boot sends
+   nothing and adds no time. A boot-time push would need a new command at
+   the end of the boot (the boot exchanges carry no spare field) and would
+   only be read by the v3 card's bus-sharing code, which watches OWNn
+   writes already. Still to confirm with David.
 4. **A write fence for the RAM disk?** `WPROT` protects only chunks that are
    mapped. A program that maps a RAM disk page by mistake can still corrupt
    files. A `FENCE` register (banks at or above it are read-only unless
