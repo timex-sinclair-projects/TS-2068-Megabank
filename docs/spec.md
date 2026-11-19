@@ -1094,8 +1094,10 @@ reported then, not silently dropped writes.
 slot whose bit is clear: its length goes into the directory and the slot is
 freed. That covers, with nothing to clean up by hand:
 
-- **Power-off and reset:** the boot report (open question 3) carries a mask
-  of 0, so every slot is closed. A file being written keeps everything up to
+- **Power-off and reset:** the boot reports nothing (open question 3), so
+  the firmware closes every slot when it sees the 2068's boot exchanges, and
+  the first `r:` command after a reset carries a mask with no stale bits
+  anyway. A file being written keeps everything up to
   its last CR or 256-byte boundary; the bytes after it are on the board but
   outside the length.
 - **NEW,** which empties CHANS and STRMS without the ROM noticing: the next
@@ -1509,15 +1511,15 @@ reference for what it changes.
    Still open: other 2068s and SCLD revisions; slot 3, and PicoVideo
    fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
-   or a field in an existing boot exchange. **Proposed (phase 4): it
-   doesn't; the firmware asks.** Mover op 7 returns found, `BASE`, `SIZE`,
+   or a field in an existing boot exchange. **Decided (David, 2026-11-19):
+   it doesn't; the firmware asks.** Mover op 7 returns found, `BASE`, `SIZE`,
    `STATUS` and `VERSION`, so the firmware learns about the board the first
    time an `r:` or `tpi:ram` command needs it, from inside that command's
    answer, gated on the pre-header's ROM_ID (25h or later). The boot sends
    nothing and adds no time. A boot-time push would need a new command at
    the end of the boot (the boot exchanges carry no spare field) and would
    only be read by the v3 card's bus-sharing code, which watches OWNn
-   writes already. Still to confirm with David.
+   writes already.
 4. **A write fence for the RAM disk?** `WPROT` protects only chunks that are
    mapped. A program that maps a RAM disk page by mistake can still corrupt
    files. A `FENCE` register (banks at or above it are read-only unless
