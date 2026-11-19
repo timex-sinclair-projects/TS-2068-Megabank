@@ -1870,7 +1870,8 @@ reference for what it changes.
     (2026-11-19); the bank API already lets the EXROM go in any chunk.
 21. **A fast entry for channel I/O.** **Built (2026-11-19), in ZEsarUX;
     not yet run on the board** (tspico-firmware-build, branch
-    `claude/fast-channel-entry`, `1a6feca`). A character through `r:` cost about
+    `claude/fast-channel-entry`,
+    timex-sinclair-projects/tspico-firmware-build#433). A character through `r:` cost about
     4.3 ms on the board ([Testing](#testing), Channels step 8), most of it
     the stock Timex bank call that every `f:` and `r:` character paid going
     into the module and coming back. That mechanism was broken as designed
@@ -1881,8 +1882,8 @@ reference for what it changes.
     | Case | Before | After |
     |---|---|---|
     | `r:` text, a stream file | 13 338 | 817 |
-    | `r:` CR (with its write-back) | 22 375 | 4 751 |
-    | `f:` text (64-byte buffer, `tpi:chwr`) | 19 154 | 10 609 |
+    | `r:` CR (with its write-back) | 22 375 | 4 904 |
+    | `f:` text (64-byte buffer, `tpi:chwr`) | 19 154 | 10 608 |
 
     So an `r:` character went from about 3.8 ms to 0.23 ms in the
     emulator. The 817 T-states are the whole of `RST 10h`, HOME's own
@@ -1915,7 +1916,7 @@ reference for what it changes.
       arithmetic until the next 256-byte boundary, the extent's end or the
       page's end.
     - **The write-backs stay where they were**, at every CR and every 256
-      bytes, because they are cheap now (a CR with its write-back is 4 751
+      bytes, because they are cheap now (a CR with its write-back is 4 904
       T-states). The cursor never crosses those points, so NEW, a reset and
       power-off keep exactly what Channels step 5 says they keep, and that
       guarantee needs no change. ZEsarUX's run of step 5's NEW case keeps
