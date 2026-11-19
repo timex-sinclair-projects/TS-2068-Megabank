@@ -1040,7 +1040,11 @@ phase 5.
 the way `OPEN #n,"f:name"` opens a file on the SD card: then `PRINT #n`,
 `INPUT #n`, `INKEY$ #n`, `LIST #n` and `CLOSE #n`. The RAM disk becomes
 random-access data storage for BASIC: record files read and written in
-place, kept through power-off by the battery. **Proposed, not yet decided.**
+place, kept through power-off by the battery. **Built (2026-11-19)** as
+written below, in the Z80 model and ZEsarUX (tspico-firmware-build#430: the
+ROM's `src/rom/fdd/rchan.asm`, the firmware's `ramdisk.py` slots and
+`tspico.py`'s `RD_RCH*`); not yet on hardware. Where the build settled or
+departed from this section is in [Channels as built](#channels-as-built).
 
 The model is the TS-Pico's `f:` channel, which works today. Its references,
 in tspico-firmware-build: `docs/reference/flows/channels.md` (the flow end to
@@ -1184,7 +1188,8 @@ freed. That covers, with nothing to clean up by hand:
 - **Power-off and reset:** the boot reports nothing (open question 3), so
   the firmware closes every slot when it sees the 2068's boot exchanges, and
   the first `r:` command after a reset carries a mask with no stale bits
-  anyway. A file being written keeps everything up to
+  anyway. (As built, only the mask closes them: see
+  [Channels as built](#channels-as-built).) A file being written keeps everything up to
   its last CR or 256-byte boundary; the bytes after it are on the board but
   outside the length.
 - **NEW,** which empties CHANS and STRMS without the ROM noticing: the next
@@ -1250,12 +1255,43 @@ be opened `rb` to read its bytes. `MOVE "r:name" TO "tpi:name"` copies the
 bytes unchanged: whether it should translate text files to PC text, as an
 `f:` file would be, is open question 14.
 
+### Channels as built
+
+What the build (2026-11-19) settled, and where it differs from the sections
+above:
+
+- **The mask's transport** (open question 14): the channel commands
+  (`tpi:rchopen`, `tpi:rchgrow`, `tpi:rchclose`) carry it as the first two
+  bytes of their hex payload; every other `r:` command is preceded by
+  `tpi:rmask`, from `TPI_SEND` (ERASE, MOVE, COPY, FORMAT, CAT `"r:…"`) and
+  from `SET_MODE` (SAVE, LOAD, VERIFY, MERGE `"r:…"`). The firmware does not
+  close slots on the boot exchanges: the first `r:` command after a reset
+  carries a mask with no stale bits, which does the same.
+- **`MOVE "r:…" TO "tpi:…"`** copies the bytes unchanged (open question 14):
+  an `r:` text file is the 2068's bytes.
+- **Listings take a pattern**, as `d:`'s do (open question 14).
+- **A record that overflows** is Q with the position back at the record's
+  start, but the bytes already written stay on the board (the section above
+  says nothing is written; `f:` writes nothing because it sends the record
+  whole). The length doesn't count them unless they were past it.
+- **`RESTORE #` and `CAT #`** on an `r:` stream are Report O: the module's
+  `STRM_REC` takes only `F` records.
+- **A channel file holds at most 65535 bytes** (a tape header's length): Q
+  past it.
+- **ROM space:** 1767 bytes at EXROM 2400h–2AE6h (free in 2.4, in chunk 1),
+  over the 600–900 estimated; the module itself gained only same-size hooks.
+- **The window:** each board access maps a chunk of 4–7 holding neither the
+  record nor the stack, with the mover's own routines (`MV_WIN`, `MV_MAP`,
+  `MV_UNMAP`), so the HSR rule holds.
+
 ### Other streams on the RAM disk
 
 - **A listing:** `OPEN #5,"r:"` reads the RAM disk's names, one per
   `INPUT #5`, then 8 End of file; `TAB 0` gives the count. As `d:`, it is
-  read-only. The firmware writes the names into a hidden scratch file and
-  opens it `r`, so the ROM reads it like any other file.
+  read-only, and takes a pattern (`OPEN #5,"r:l*"`). The firmware writes the
+  names, 10-byte records padded with 0, into clusters held only by the
+  stream's slot (no directory entry) and opens it `r`, so the ROM reads it
+  like any other file.
 - **Capturing the printer:** `OPEN #3,"r:listing","w"`, then `LLIST` or
   `LPRINT`, then `CLOSE #3`. Needs checking that `CLOSE #3` puts P back, as
   it should for `f:` (testing).
@@ -1573,7 +1609,13 @@ reference for what it changes.
    tspico-firmware-build#429): in the Z80 model and ZEsarUX; not yet on
    hardware.
 9. **ROM and firmware: `r:` channels** ([Channels](#channels-phase-9)).
-   Depends on 4 and 5 only, not on 8, so it can go before it.
+   Depends on 4 and 5 only, not on 8, so it can go before it. **Built
+   (2026-11-19)** ([Channels as built](#channels-as-built)): the Z80 model
+   (`src/test/rom_rchan_hosttest.py`, 30/30, the ROM against the firmware's
+   own `ramdisk.Disk`), the firmware's host tests (`ramdisk_hosttest.py`,
+   78/78) and ZEsarUX end to end (`tools/emu/megabank_smoke.py`, 54/54);
+   not yet on hardware. Testing steps 2, 3, 4, 6, 7 and 8 under Channels are
+   still to run.
 
 ## Open questions
 
@@ -1719,12 +1761,12 @@ reference for what it changes.
     would pull /BE up at all (R3's pad, DNP, is for that).
 14. **Channels** ([Channels](#channels-phase-9)): agree the recommendations
     (CHANS records with the `f:` hooks, direct access through the window,
-    the slots and the open-stream mask, text mode in the ROM). Still open:
-    whether `MOVE "r:…" TO "tpi:…"` translates a channel text file to PC
-    text (keywords spelt out, LF), as an `f:` file would be; whether
-    listings take a pattern, as `d:` does; and how the open-stream mask
-    travels in `r:` commands (decided with `docs/PROTOCOL.md`, with open
-    question 3).
+    the slots and the open-stream mask, text mode in the ROM). **Answered
+    (2026-11-19):** adopted as written; `MOVE "r:…" TO "tpi:…"` copies the
+    bytes unchanged; listings take a pattern; the mask travels in the
+    channel commands' payloads and in `tpi:rmask` before every other `r:`
+    command (tspico-firmware-build's `docs/PROTOCOL.md` §6.3).
+    [Channels as built](#channels-as-built) has the rest.
 
 15. **If the 2068's data buffers turn on for FCh/FDh** (testing step 2),
     how the board keeps them off. First check whether /BE disables them in
