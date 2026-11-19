@@ -584,12 +584,12 @@ and none of it depends on BUSISO or IOA5:
   owner is 1–253 ([Firmware](#firmware)). Without that, a DOCK chunk would
   have two drivers: /BE switches off the 2068's memory but not the v3 card.
   Since the HSR rule puts every mapped chunk in DOCK or EXROM, this is not
-  optional. **Measured (2026-11-18):** the v3 card's released firmware (a
-  main build, 2026-11-09) doesn't have it yet; it is on the TS-Pico repo's
-  `megabank-bus-sharing` branch. With that build, a mapped DOCK chunk read
-  back wrong (the card served the DOCK reads); with its DOCK serving
-  switched off (`tsbus.dock(False)` at its REPL) the board's bytes came
-  through.
+  optional. **Measured (2026-11-18):** with the v3 card's firmware of
+  2026-11-09, which predates the yield, a mapped DOCK chunk read back wrong
+  (the card served the DOCK reads); with its DOCK serving switched off
+  (`tsbus.dock(False)` at its REPL) the board's bytes came through. With the
+  yield (TS-Pico main `d5be583`, its `tsbus.stats()` showing `mb_owned`) and
+  DOCK serving on, the test passes: 111, 222, 77.
 - **/BE is open-drain on both cards**, so they never fight electrically.
 - **Software sets the chunk's bit in F4h (HSR) as well as its owner
   (measured, 2026-11-18).** /BE stops the 2068's memory answering a read, but

@@ -77,7 +77,7 @@ static uint off_be, off_io, off_page;
 static int ch_ptr, ch_data;
 
 // Counters and a log of register writes, for the console.
-static volatile uint32_t n_io, n_in, n_out, n_drop, n_reset;
+static volatile uint32_t n_io, n_in, n_out, n_drop, n_reset, n_unstick;
 #define LOG_N 64
 static volatile uint32_t log_buf[LOG_N];  // port << 16 | reg << 8 | value
 static volatile uint32_t log_head;
@@ -172,6 +172,7 @@ static void __not_in_flash_func(core1_main)(void) {
     const uint32_t h_reply = off_io + io_offset_reply;
     const uint32_t h_capture = off_io + io_offset_capture;
     const uint32_t h_done = off_io + io_offset_done;
+    const uint32_t pc_answer = off_io + io_offset_answer;
     bool in_reset = false;
     bool have = false;
     uint32_t w = 0;
@@ -192,7 +193,18 @@ static void __not_in_flash_func(core1_main)(void) {
                 wp_on = wp;
                 update_all();
             }
-            if (pio_sm_is_rx_fifo_empty(pio_bus, sm_io)) continue;
+            if (pio_sm_is_rx_fifo_empty(pio_bus, sm_io)) {
+                // `io` waiting for an answer with nothing in either FIFO: its
+                // request was taken for stray data and never answered (with
+                // the 2068 off every pin reads low, /MREQ too). Free it.
+                if (pio_sm_get_pc(pio_bus, sm_io) == pc_answer
+                    && pio_sm_is_tx_fifo_empty(pio_bus, sm_io)
+                    && pio_sm_is_rx_fifo_empty(pio_bus, sm_io)) {
+                    pio_bus->txf[sm_io] = h_done;
+                    n_unstick++;
+                }
+                continue;
+            }
             w = pio_bus->rxf[sm_io];
         }
         have = false;
@@ -547,8 +559,8 @@ static void show_regs(void) {
     for (int c = 0; c < 8; c++) printf("   %c", owned(c) ? '*' : '.');
     printf("\nWPROT %02x  STATUS %02x  sel %02x  BASE %u SIZE %u  chunks 0-1 %s\n", wprot, reg_read(0x11),
            sel, base, size, rom_lock ? "LOCKED" : "unlocked");
-    printf("I/O cycles %lu: IN FCh/FDh %lu, OUT %lu, dropped %lu; resets %lu\n", n_io, n_in, n_out, n_drop,
-           n_reset);
+    printf("I/O cycles %lu: IN FCh/FDh %lu, OUT %lu, dropped %lu, unstuck %lu; resets %lu\n", n_io, n_in,
+           n_out, n_drop, n_unstick, n_reset);
 }
 
 static void show_log(void) {

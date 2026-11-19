@@ -18,7 +18,10 @@ per cycle, whether to answer and which page the SRAM sees.
 | core 1 | RAM | The registers; rewrites the `be` table and the page table on each register write, and on /RESET; follows the write-protect switch. |
 | core 0 | | A USB console. |
 
-`be` and `io` fill PIO0's 32 instructions. Clock: 250 MHz, as the v3 card
+`be` and `io` fill PIO0's 32 instructions. If core 1 finds `io` waiting at
+its `pull` with nothing in either FIFO, it lost that request (with the 2068
+off, the dead bus looks like an I/O cycle whose /MREQ is low) and answers
+`done`. Clock: 250 MHz, as the v3 card
 runs; the flash divider goes from 2 to 3 first (83 MHz), from RAM, since the
 boot divider would run the GD25Q128E at 125 MHz. The core runs from the
 board's 1.2 V LDO, so there's no regulator to raise.
@@ -32,8 +35,8 @@ it shows the data lines on the SRAM's side of U3 (SD0-SD7) and A7-A0, but
 not WINH or the bus's /BE.
 
 **Chunks 0 and 1 are locked** by default: the TS-Pico serves HOME and EXROM
-there with its own /BE, and until its firmware follows the owner table both
-cards would drive the bus. OWN0/OWN1 read back what was written; the board
+there with its own /BE. Its firmware now yields chunks the board owns (main
+`d5be583`), but mapping chunks 0-1 hasn't been tested. OWN0/OWN1 read back what was written; the board
 never answers there. `k` toggles the lock.
 
 Not yet: `BASE` and `SIZE` from flash (fixed at 1 and 64); the battery bit
@@ -73,7 +76,7 @@ Two banks in chunk 5 (A000h), with RAMTOP below it:
 ```
 
 That prints 111, 222, 222: the last is the leak. With the chunk in DOCK
-(the v3 card's DOCK serving off, or its firmware following the owner table):
+(the v3 card's DOCK serving off, or its firmware yielding owned chunks):
 
 ```
 10 CLEAR 40959
@@ -87,8 +90,8 @@ That prints 111, 222, 222: the last is the leak. With the chunk in DOCK
 90 PRINT PEEK 40960
 ```
 
-should print 111, 222, 77 (run with DOCK serving on, it printed 1, 0, 77; the
-version run with it off wrote in DOCK, read back HOME and in DOCK, and passed).
+prints 111, 222, 77. It is `basic/mbdock.bas`; `zmakebas -a 10 -n MBDOCK -o
+build/MBDOCK.TAP basic/mbdock.bas` makes a TAP for the v3 card's SD card.
 
 ## Results
 
@@ -109,10 +112,21 @@ slot 2, SW2 closed):
   write leak is the 2068's: its HOME RAM takes a write even with /BE low.
 - With the chunk in DOCK as well (`OUT 244,32`), writes reach the SRAM and
   the 2068's RAM keeps its byte, but reads came back wrong: the v3 card
-  serves DOCK, and its released firmware doesn't yet follow the owner table.
+  serves DOCK, and the firmware it ran then (2026-11-09) didn't yield owned chunks.
   With the v3 card's DOCK serving off (`tsbus.dock(False)` at its REPL),
   everything passes: 111, 222, 77 (the 2068's RAM untouched), 33. So a
   mapped chunk needs its HSR bit set (spec, "Sharing the bus").
+- With the v3 card on TS-Pico main `d5be583`, which yields chunks the
+  board owns, and its DOCK serving on: 111, 222, 77 (`mbdock.tap`, loaded
+  from its SD card). Its `tsbus.stats()` showed `mb_owned` 32 with chunk 5
+  mapped.
+- A first try of that gave 14 or 78 for both reads: the board had stopped
+  answering anything. With the 2068 off and the board on USB, every bus
+  line reads low; `io` pushed that as an I/O cycle, core 1 took the word for
+  stray capture data (/MREQ low) and never answered, and `io` waited at its
+  `pull` from then on. Nothing drove the chunk's reads. Core 1 now sends
+  `done` when it finds `io` waiting there with both FIFOs empty (`r`:
+  "unstuck"); after that, power cycles of the 2068 leave the board working.
 - First run, before a fix: the DMA chain never ran (an endless transfer
   count of 0; the RP2350 needs a non-zero count with the endless mode), so
   the SRAM was never selected and mapped reads returned whatever the data

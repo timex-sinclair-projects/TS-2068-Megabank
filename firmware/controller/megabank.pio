@@ -52,7 +52,9 @@ public ours:
 ; io (PIO0, offset 16): every I/O cycle goes to core 1, which answers with a
 ; handler address (and a reply byte above it): `reply` for IN FCh/FDh,
 ; `capture` for OUT FCh/FDh, `done` for everything else. If core 1 answers
-; after /IORQ has already risen, the answer is dropped.
+; after /IORQ has already risen, the answer is dropped. If core 1 finds the
+; machine waiting at `answer` with nothing in either FIFO, it lost the request
+; (power-down noise: all pins low, so /MREQ reads low too) and sends `done`.
 ;
 ; Words pushed: a request is the 25 pins GP0-GP24 (SD, A7-A0, A15-A13,
 ; /MREQ /IORQ /RD /WR /RFSH /M1); /MREQ (bit 19) is always high in an I/O
@@ -68,6 +70,7 @@ public top:
     wait 0 gpio 20          [7]             ; /IORQ low; /RD or /WR with it
     in pins, 25
     push block
+public answer:
     pull block                              ; from core 1: handler | byte << 5
     jmp pin top                             ; /IORQ high already: too late, drop
     out pc, 5
