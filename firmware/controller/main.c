@@ -14,18 +14,22 @@
  * the lock on, OWN0/OWN1 read back what was written but the board never
  * answers there. `k` on the console turns the lock off.
  *
- * Not yet: BASE and SIZE from flash (fixed at 1 and 64), the battery bit
- * after boot.
+ * Settings: BASE and SIZE live in the last sector of the controller's flash
+ * (spec, "The controller"; open question 11), set from the console with `S`.
+ * With nothing valid there they are 1 and 64. The battery is measured at boot
+ * and every hour after (spec, "Battery monitor"), and on `v`.
  */
 #include <stdio.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
+#include "pico/flash.h"
 #include "pico/multicore.h"
 #include "hardware/adc.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
+#include "hardware/flash.h"
 #include "hardware/pio.h"
 #include "hardware/structs/busctrl.h"
 #include "hardware/structs/qmi.h"
@@ -57,13 +61,14 @@
 #define PAGE_PINS    11   // GP28-GP38
 #define PAGE_IDLE    0x7ffu
 
-#define VERSION      2
+#define VERSION      3
 #define SYS_KHZ      250000
 
 // ---- state -------------------------------------------------------------------
 
 static uint8_t own[8], sub[8], wprot, sel;
-static uint8_t base = 1, size = 64;
+static volatile uint8_t base = 1, size = 64;
+static bool settings_from_flash;   // false: the defaults
 static volatile bool battery_low;
 static volatile bool rom_lock = true;
 static bool wp_on;
@@ -815,6 +820,107 @@ static float battery_volts(void) {
     return acc / 64.0f * 3.3f / 4096.0f * 2;
 }
 
+#define BATTERY_LOW_V   2.5f
+#define BATTERY_EVERY_S 3600
+
+// Measures the battery and sets STATUS bit 1 from it.
+static float battery_check(void) {
+    float v = battery_volts();
+    battery_low = v < BATTERY_LOW_V;
+    return v;
+}
+
+// ---- settings in flash: BASE and SIZE ----------------------------------------
+
+// The last 4K sector of the flash. A record is valid only with the magic, the
+// version, a check byte and values the spec allows.
+#define SETTINGS_OFFSET (PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE)
+#define SETTINGS_MAGIC  0x5453424du     // "MBST"
+
+typedef struct {
+    uint32_t magic;
+    uint8_t version, base, size, check;
+} settings_t;
+
+static bool settings_ok(unsigned b, unsigned s) {
+    return (b == 1 || b == 65 || b == 129 || b == 193) && (s == 8 || s == 16 || s == 32 || s == 64);
+}
+
+static uint8_t settings_check(uint8_t b, uint8_t s) { return (uint8_t)~(b ^ s ^ 0x5a); }
+
+static bool settings_load(void) {
+    const settings_t *st = (const settings_t *)(XIP_BASE + SETTINGS_OFFSET);
+    if (st->magic != SETTINGS_MAGIC || st->version != 1 || st->check != settings_check(st->base, st->size)
+        || !settings_ok(st->base, st->size))
+        return false;
+    base = st->base;
+    size = st->size;
+    return true;
+}
+
+static uint8_t settings_page[FLASH_PAGE_SIZE] __attribute__((aligned(4)));
+
+// Runs with core 1 locked out and interrupts off (flash_safe_execute). The
+// SDK's erase and program end by re-running the boot XIP setup, which puts the
+// flash back on the boot divider: 125 MHz at 250 MHz. flash_slow() puts it
+// back to /3 before anything runs from flash again.
+static void __no_inline_not_in_flash_func(settings_flash)(void *unused) {
+    (void)unused;
+    flash_range_erase(SETTINGS_OFFSET, FLASH_SECTOR_SIZE);
+    flash_range_program(SETTINGS_OFFSET, settings_page, FLASH_PAGE_SIZE);
+    flash_slow();
+}
+
+static bool settings_save(uint8_t b, uint8_t s) {
+    memset(settings_page, 0xff, sizeof settings_page);
+    settings_t st = {SETTINGS_MAGIC, 1, b, s, settings_check(b, s)};
+    memcpy(settings_page, &st, sizeof st);
+    return flash_safe_execute(settings_flash, NULL, 1000) == PICO_OK;
+}
+
+// A number typed at the console, ended by Enter; -1 for nothing or Esc.
+static int read_number(void) {
+    int n = -1;
+    for (;;) {
+        int ch = getchar_timeout_us(30 * 1000 * 1000);
+        if (ch == PICO_ERROR_TIMEOUT || ch == 27) return -1;
+        if (ch == '\r' || ch == '\n') return n;
+        if (ch >= '0' && ch <= '9' && n < 1000) {
+            n = (n < 0 ? 0 : n * 10) + (ch - '0');
+            putchar(ch);
+        }
+    }
+}
+
+static void settings_menu(void) {
+    printf("\nBASE %u, SIZE %u. New BASE (1, 65, 129, 193; Enter keeps it): ", base, size);
+    int b = read_number();
+    printf("\nNew SIZE (8, 16, 32, 64; Enter keeps it): ");
+    int s = read_number();
+    if (b < 0) b = base;
+    if (s < 0) s = size;
+    if (!settings_ok(b, s)) {
+        printf("\nNot changed: BASE must be 1, 65, 129 or 193, SIZE 8, 16, 32 or 64.\n");
+        return;
+    }
+    if (b == base && s == size) {
+        printf("\nNot changed.\n");
+        return;
+    }
+    // Core 1 stops while the flash is written (tens of ms): an I/O cycle in
+    // that time goes unanswered. Best with the 2068 off or idle.
+    if (!settings_save(b, s)) {
+        printf("\nThe flash write failed; nothing changed.\n");
+        return;
+    }
+    base = b;
+    size = s;
+    settings_from_flash = true;
+    update_all();
+    printf("\nSaved: BASE %u, SIZE %u (banks %u-%u).\n", base, size, base,
+           base + size - 1 > 253 ? 253 : base + size - 1);
+}
+
 static void show_regs(void) {
     printf("\nOWN :");
     for (int c = 0; c < 8; c++) printf(" %3u", own[c]);
@@ -822,8 +928,9 @@ static void show_regs(void) {
     for (int c = 0; c < 8; c++) printf(" %3u", sub[c]);
     printf("\nours:");
     for (int c = 0; c < 8; c++) printf("   %c", owned(c) ? '*' : '.');
-    printf("\nWPROT %02x  STATUS %02x  sel %02x  BASE %u SIZE %u  chunks 0-1 %s\n", wprot, reg_read(0x11),
-           sel, base, size, rom_lock ? "LOCKED" : "unlocked");
+    printf("\nWPROT %02x  STATUS %02x  sel %02x  BASE %u SIZE %u (%s)  chunks 0-1 %s\n", wprot,
+           reg_read(0x11), sel, base, size, settings_from_flash ? "flash" : "defaults",
+           rom_lock ? "LOCKED" : "unlocked");
     printf("I/O cycles %lu: IN FCh/FDh %lu, OUT %lu, dropped %lu, unstuck %lu; resets %lu\n", n_io, n_in,
            n_out, n_drop, n_unstick, n_reset);
 }
@@ -870,7 +977,8 @@ static void help(void) {
            "  l   log of register writes\n"
            "  d   diagnostics: page SM, DMA, page pins\n"
            "  mCB OWN of chunk C = bank B (digits)\n"
-           "  v   battery\n"
+           "  v   battery (and STATUS bit 1)\n"
+           "  S   settings: BASE and SIZE, kept in flash\n"
            "  c   capture a mapped write (and a read): /MREQ /RD /WR /BE ... timing\n"
            "  C   capture a mapped read, with the data lines (SD0-7) and A7-A0\n"
            "  b   /BE release over many captures: rise after /MREQ, gap to the next cycle\n"
@@ -888,12 +996,17 @@ int main(void) {
     board_safe_init();
     clock_up();
     stdio_init_all();
-    float v = battery_volts();
-    battery_low = v < 2.5f;
+    settings_from_flash = settings_load();
+    battery_check();
     bus_start();
+    absolute_time_t next_battery = make_timeout_time_ms(BATTERY_EVERY_S * 1000);
 
     for (;;) {
         int ch = getchar_timeout_us(100 * 1000);
+        if (time_reached(next_battery)) {
+            battery_check();
+            next_battery = make_timeout_time_ms(BATTERY_EVERY_S * 1000);
+        }
         if (ch == PICO_ERROR_TIMEOUT) continue;
         switch (ch) {
         case 'r': show_regs(); break;
@@ -914,7 +1027,12 @@ int main(void) {
             show_regs();
             break;
         }
-        case 'v': printf("\nbattery %.3f V\n", battery_volts()); break;
+        case 'v': {
+            float v = battery_check();
+            printf("\nbattery %.3f V%s\n", v, battery_low ? ": LOW (STATUS bit 1)" : "");
+            break;
+        }
+        case 'S': settings_menu(); break;
         case 'k':
             rom_lock = !rom_lock;
             // update_all on core 1's side of things: it only rewrites tables,

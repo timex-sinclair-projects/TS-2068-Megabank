@@ -1457,7 +1457,8 @@ hardware: neither this board nor the v3 card can run bus cycles.
    the one being written may be lost.
 5. The RAM disk end to end: every SAVE/LOAD form, MOVE both ways, backup and
    restore, a full disk, compaction.
-6. `tools/hwcheck.py` grows a RAM-board section.
+6. `tools/hwcheck.py` grows a RAM-board section. **Written (2026-11-19):**
+   `--megabank`, tests 2, 4 (by hand) and 5.
 
 **Channels (phase 9),** in the emulator first, as `f:` was:
 
@@ -1503,8 +1504,23 @@ reference for what it changes.
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
    JLCPCB), prototype, hardware tests. **Routed (2026-10-18; re-routed 2026-10-19 with /INT and /NMI):** schematic
    generated (ERC: one expected warning), v3's form factor, routed by v3's
-   flow, DRC clean; not yet ordered ([hardware/](../hardware/README.md)). Can run
-   in parallel with 2–6 once the register map is agreed.
+   flow, DRC clean ([hardware/](../hardware/README.md)). **Built:** boards 1
+   and 2 run the controller firmware (`firmware/controller/`) in a 2068: banks
+   map into every chunk, DOCK and EXROM included, /BE timing measured, battery
+   retention passed (2026-11-18 and 19). **Software for the rest (2026-11-19):**
+   `BASE`/`SIZE` in the controller's flash, set over USB (open question 11);
+   the battery measured hourly; the memory test (`firmware/controller/memtest/`,
+   hardware test 2, checked in ZEsarUX); tspico-firmware-build's
+   `tools/hwcheck.py --megabank` (test 6), which runs it and a RAM disk test
+   (`basic/SD/TAP/test/mbdisk.bas`, test 5) and walks through the
+   write-protect switch and a power cut (test 4). In ZEsarUX's Megabank model
+   the memory test passes (and catches a planted fault), and `mbdisk` passes
+   28 of 28. It first found a phase 5 firmware bug: the `r:` statements'
+   bare statuses said IDLE, so a program's LOAD or VERIFY straight after a
+   SAVE sometimes lost its first block command (report 29); they now say
+   READY without IDLE, as the channel commands do (tspico-firmware-build
+   #428). Still to run on the boards: tests 2–5, and the standby current
+   (test 3).
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. David leans towards only what
    the board and RAM disk need, and is open to the whole API (open question 5).
@@ -1632,7 +1648,9 @@ reference for what it changes.
 11. **The controller's firmware and settings.** How its firmware is loaded
     (a surface-mount USB-C connector, or SWD pads), and how `BASE` and `SIZE`
     are set: over USB, or from the 2068 through a guarded register
-    (`SAVE "tpi:ram base 65"`, say).
+    (`SAVE "tpi:ram base 65"`, say). **Over USB for now (2026-11-19):** the
+    console's `S` writes them to the last sector of the controller's flash;
+    firmware loads over the USB-C connector. A 2068-side route is still open.
 12. **Standby with the controller off.** Settled on paper for the EV30
     ([Parts](#parts)). Still to check: that no path lets the battery feed the
     RP2350B or the buffers, and the real standby current on the prototype
