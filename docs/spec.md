@@ -602,9 +602,10 @@ and none of it depends on BUSISO or IOA5:
   keeps its byte. So **map = OWNn, then F4h bit n; unmap = F4h bit n clear,
   then OWNn = 0**, and anything that rewrites F4h (the ROM's
   `SAVE_STATUS`/`RESTORE_STATUS`, ZXDesk) must keep the bits of owned
-  chunks. Chunks 0-1 hold ROM, where a stray write is harmless anyway. Still
-  to test: the EXROM case (FFh bit 7 set), where the 2068's own EXROM must be
-  kept off reads by /BE.
+  chunks. Chunks 0-1 hold ROM, where a stray write is harmless anyway. The
+  EXROM case works too (FFh bit 7 set as well, 2026-11-18): /BE keeps the
+  2068's own EXROM off the reads, the banks read back 111 and 222, and the
+  RAM underneath kept 77.
 - **PicoVideo watches the same writes** and stops copying screen writes into
   its display when chunk 2 or 3 is owned by a bank ([PicoVideo](#picovideo)).
 - **The ROM writes every `OWNn` = 0 at boot**, even though the board clears
@@ -1420,10 +1421,12 @@ reference for what it changes.
    RAM keeps its byte (77 before, 77 after). Reads in DOCK then came back
    wrong (1, 0) until the v3 card's DOCK serving was switched off, after
    which the whole test passed: 111, 222, 77, and 33 written HOME and read
-   in DOCK. The rule is in [Sharing the bus](#sharing-the-bus). Still open:
-   /BE's slow rise (+576 to +640, the pull-up, open question 13) against
-   the next cycle, which here began at +696; the EXROM case; other 2068s
-   and SCLD revisions; every slot, and PicoVideo fitted.
+   in DOCK. The rule is in [Sharing the bus](#sharing-the-bus). Later the
+   same day, with the v3 card yielding owned chunks: DOCK, EXROM (FFh bit 7)
+   and chunks 0-1 over the ROM all pass. Still open: /BE's slow rise (+576
+   to +640, the pull-up, open question 13) against the next cycle, which
+   here began at +696; other 2068s and SCLD revisions; every slot, and
+   PicoVideo fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.

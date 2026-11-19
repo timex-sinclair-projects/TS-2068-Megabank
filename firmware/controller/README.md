@@ -121,6 +121,8 @@ slot 2, SW2 closed):
   board owns, and its DOCK serving on: 111, 222, 77 (`mbdock.tap`, loaded
   from its SD card). Its `tsbus.stats()` showed `mb_owned` 32 with chunk 5
   mapped.
+- Chunk 5 in EXROM (`basic/mbexrom.bas`: FFh bit 7 as well as F4h bit 5):
+  111, 222, 77. /BE keeps the 2068's EXROM off the reads.
 - Chunks 0 and 1, over the ROM (`basic/mbrom.bas`, `k` to unlock; machine
   code at 50000 with interrupts off): in each, bank 1 and bank 2 kept 111
   and 222, a CALL to a RET in the bank returned (an opcode fetch from the
