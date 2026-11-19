@@ -1514,11 +1514,12 @@ reference for what it changes.
    `tools/hwcheck.py --megabank` (test 6), which runs it and a RAM disk test
    (`basic/SD/TAP/test/mbdisk.bas`, test 5) and walks through the
    write-protect switch and a power cut (test 4). In ZEsarUX's Megabank model
-   the memory test passes (and catches a planted fault); `mbdisk` passes 24–27
-   of 28, because an `r:` LOAD or VERIFY run from a program just after a SAVE
-   sometimes ends in report 29 (the Pico reset the transaction: the Z80 sent
-   6 of the next pre-header's 10 bytes). Not yet understood; it may be the
-   emulator's. Still to run on the boards: tests 2–5, and the standby current
+   the memory test passes (and catches a planted fault), and `mbdisk` passes
+   28 of 28. It first found a phase 5 firmware bug: the `r:` statements'
+   bare statuses said IDLE, so a program's LOAD or VERIFY straight after a
+   SAVE sometimes lost its first block command (report 29); they now say
+   READY without IDLE, as the channel commands do (tspico-firmware-build
+   #428). Still to run on the boards: tests 2–5, and the standby current
    (test 3).
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. David leans towards only what
