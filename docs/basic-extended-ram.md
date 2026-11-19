@@ -423,10 +423,9 @@ From `tspico-firmware-build`, `origin/main`, and the branch
   never the Timex bank API.
 - **SAVE, LOAD and MERGE** already pass through the TS-Pico's SAVE-ETC hook
   (2548h → X01ABh), the place to recognise an extended program.
-- **The v3 card yields owned chunks** on `megabank-bus-sharing`
-  (`src/tsbus/megabank.c`): any chunk the board owns is not served from
-  the DOCK or EXROM. On `main` the card already never serves HOME RAM
-  chunks 2–7, so windows in 4–7 are safe with either.
+- **The v3 card yields owned chunks** (`src/tsbus/megabank.c`, merged
+  to `main` as `d5be583`; tested on board 1, 2026-11-18): any chunk the
+  board owns is not served from the DOCK or EXROM.
 - **No reservation of 5DDDh–633Fh** appears in the firmware repo. The
   claim comes from the reference library's analysis of Gustavo's ROM
   (open question 17 in the spec).
