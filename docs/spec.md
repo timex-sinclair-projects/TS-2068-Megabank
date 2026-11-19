@@ -675,7 +675,8 @@ mapped (the handler at 62AEh). With a nonzero count:
   program's mapped pages would vanish behind each ROM call.
 
 So the minimal ROM leaves the count at 0, and the Timex API doesn't know the
-board exists. The RAM disk and programs use the registers directly.
+board exists. Phase 8 removes both reasons (the state is 16 bytes, and the
+crossings take chunks 0–1 only), and sets the count. The RAM disk and programs use the registers directly.
 
 ### What the ROM needs from SYSCON
 
@@ -768,6 +769,51 @@ ZEsarUX's Megabank model with a stand-in RAM disk
 The owner table makes this much cheaper than Timex's design: the state the
 API loops over, one register set per bank, is just 16 bytes on this board
 (`OWN0`–`OWN7`, `SUB0`–`SUB7`), whatever the bank count.
+
+**Built (2026-11-19), all seven items, in the Megabank test ROM (2.5)**
+([tspico-firmware-build#429](https://github.com/timex-sinclair-projects/tspico-firmware-build/pull/429)).
+Tested in a Z80 model of the board with the HSR rule
+(`rom_bankapi_hosttest.py`, from RAM 6200h and from the 64-column copy) and
+in ZEsarUX (`BANK_ENABLE` there and back); not yet on hardware. Where it
+differs from the plan below:
+
+- **No nibble translators.** There is no Timex bank hardware or software to
+  stay compatible with, so `WRITE_BS_REG` and `READ_BS_REG` are gone, not
+  translated (nothing calls them: the boot's search was their only user),
+  and their 169 bytes hold the new code's helpers. `BANK_ENABLE`,
+  `GET_STATUS`, `GET_NUMBER`, `SAVE_STATUS` and `RESTORE_STATUS` talk to the
+  board directly (`src/rom/fdd/bankapi.asm`), keeping every documented entry
+  point. That also makes item 6's `DI`/`EI` moot: `BANK_ENABLE` and
+  `RESTORE_STATUS` turn interrupts off and put them back as they were
+  (`LD A,I`, read twice for the NMOS Z80).
+- **The HSR rule** ([Hardware](#hardware)) is kept in `BANK_ENABLE` and
+  `RESTORE_STATUS`: OWN before its HSR bit when a chunk is mapped, the bit
+  before OWN when it goes back.
+- **The DOCK and the EXROM get exactly the chunks asked for.** Timex's code
+  (genuine, not a TS-Pico change) tied the EXROM to chunks 0–1. Charlie
+  Day's LEAP ROMs put the EXROM in chunk 6, and they are to run on the
+  TS-Pico and the board one day, so the API no longer assumes chunks 0–1.
+  LEAP itself pages the EXROM by writing F4h and FFh directly (F4h = 40h,
+  then 0), which would clear the HSR bit of a board bank mapped elsewhere
+  and let writes through to HOME RAM: a LEAP build for the board must
+  read-modify-write F4h, or the board must tolerate it (open question 20).
+- **The frame is 19 bytes**, not the bank count + 2: FFh, F4h, the 16
+  registers and the register select (FDh), so an interrupt between a
+  program's `OUT (FDh)` and its `IN (FCh)` doesn't lose the select. Only FFh
+  bit 7 comes back (6.5.5). The interrupt handler, `CALL_BANK` and
+  `XFER_BYTES` reserve 19.
+- **Item 3:** `MB_DETECT`, at the end of the boot reset, sets `MAXBNK` and
+  6315h to `SIZE`, cut so the last bank is 253, and keeps `BASE` at 6404h.
+- **Item 5:** the relocation table is rebuilt by the build from two
+  assemblies (64 entries); three of the four wrong entries were in the
+  rewritten code, the fourth (674Fh → 6744h) is fixed.
+- **Item 4:** only the EXROM's three crossings needed narrowing (03DDh,
+  08DDh, 0017h); HOME's and the interrupt handler's already took chunks 0–1
+  or 0–2. `CALL_HOME` (03DDh) goes through a new thunk: patched in place,
+  its `LD H,0` turned FFFCh's L into a parameter count of FCh, and
+  CALL_BANK's 266-byte copy from SP, just below 6200h, ran over the bank
+  code during the call (a hang and reset).
+- **658Eh–65CDh is the bank stack**, not free space (open question 10).
 
 1. **Rewrite `WRITE_BS_REG` and `READ_BS_REG`** (RAM 635Ch–6404h, X115C–X1204,
    169 bytes, contiguous) as a translation onto the ports. Keep both entry
@@ -1522,8 +1568,10 @@ reference for what it changes.
    #428). Still to run on the boards: tests 2–5, and the standby current
    (test 3).
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
-   Last, because nothing above depends on it. David leans towards only what
-   the board and RAM disk need, and is open to the whole API (open question 5).
+   Last, because nothing above depends on it. **Built (2026-11-19), all of
+   it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
+   tspico-firmware-build#429): in the Z80 model and ZEsarUX; not yet on
+   hardware.
 9. **ROM and firmware: `r:` channels** ([Channels](#channels-phase-9)).
    Depends on 4 and 5 only, not on 8, so it can go before it.
 
@@ -1602,8 +1650,9 @@ reference for what it changes.
    unlocked) would close that, at the cost of a register the ROM must set at
    boot.
 5. **Scope of the Timex bank API work**
-   ([ROM](#the-timex-bank-api-on-the-board-phase-8)): items 1–5 (the API
-   works with the board) or all of it. David leans towards the minimum.
+   ([ROM](#the-timex-bank-api-on-the-board-phase-8)). **Answered
+   (2026-11-19): all of it**, items 1–7, with no nibble-wide translators
+   (nothing old needs them).
 6. **Parts, for JLCPCB assembly** ([Hardware](#parts)):
    - **The SRAM.** The ×8 mode is confirmed in both datasheets. Still open:
      whether the DV30 is current (its only datasheet found is from 2006; the
@@ -1642,9 +1691,15 @@ reference for what it changes.
      entry to the mover, and that entry's form.
 9. **SYSCON entries for RAM banks.** SYSCON holds at most 10 entries (its
    scratch space at 5FE9h–5FFFh is hard-coded). Nothing validates bank numbers
-   against it, so RAM banks may not need entries at all; decide in phase 8.
+   against it, so RAM banks may not need entries at all. **Phase 8 adds
+   none:** nothing in the bank API reads SYSCON, and the boot still ends it
+   with the 80h marker. Open only if a program turns up that looks for
+   banks there.
 10. **The bank stack** holds 16 frames of 4 bytes with no overflow check.
-    Deep `CALL_BANK` nesting could overrun it. Phase 8.
+    Deep `CALL_BANK` nesting could overrun it. Phase 8 leaves it as it is:
+    65CEh's pointer starts at 65CEh and grows down through 658Eh–65CDh,
+    FFh bytes that look free (so nothing new is kept there). Still open:
+    whether a check is worth the bytes.
 11. **The controller's firmware and settings.** How its firmware is loaded
     (a surface-mount USB-C connector, or SWD pads), and how `BASE` and `SIZE`
     are set: over USB, or from the 2068 through a guarded register
@@ -1721,6 +1776,15 @@ reference for what it changes.
     FCh/FDh included. The model marks its /BE input "TBD", and the US SCLD
     may differ: the bench test stands, but plan on "contended". The model
     also has the SCLD strobing the upper 32K's CAS lines, uncontended.
+20. **LEAP ROMs on the board.** Charlie Day's LEAP ROMs keep their system
+    variables at 8xxxh, don't use the Timex bank code, and page the EXROM
+    into chunk 6 by writing F4h = 40h and then 0 directly. On the board that
+    clears the HSR bit of any bank mapped elsewhere, so writes there reach
+    HOME RAM too. A LEAP build for the TS-Pico and the board needs either
+    LEAP to read-modify-write F4h, or the board (or the TS-Pico) to keep a
+    board-owned chunk's writes out of HOME RAM whatever F4h says. The TS-Pico
+    must also serve the EXROM outside chunks 0–1. Raised by David
+    (2026-11-19); the bank API already lets the EXROM go in any chunk.
 
 ## Sources
 
