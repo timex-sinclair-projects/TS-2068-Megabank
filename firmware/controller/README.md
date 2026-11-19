@@ -40,8 +40,20 @@ there with its own /BE. With firmware that yields chunks the board owns
 cards on older firmware. OWN0/OWN1 read back what was written; the board
 never answers there. `k` toggles the lock.
 
-Not yet: `BASE` and `SIZE` from flash (fixed at 1 and 64); the battery bit
-is read once at boot.
+**Settings.** `BASE` and `SIZE` (spec, "Bank numbers"; open question 11)
+live in the last 4K sector of the controller's flash (offset `0xFFF000`),
+set over USB with `S`: BASE 1, 65, 129 or 193, SIZE 8, 16, 32 or 64. With
+nothing valid there they are 1 and 64; `r` says which. Core 1 stops while
+the sector is written (tens of ms), so an I/O cycle then goes unanswered:
+change them with the 2068 off or idle. The SDK's flash write ends by
+re-running the boot XIP setup, which puts the flash back on the boot
+divider (125 MHz at 250 MHz), so the write runs `flash_slow()` again, from
+RAM, before anything runs from flash.
+
+**Battery.** Measured at boot, every hour after, and on `v`; `STATUS` bit 1
+is set below 2.5 V (spec, "Battery monitor").
+
+`VERSION` (register 16h) is 3 from this version on.
 
 ## Build and flash
 
@@ -62,8 +74,8 @@ chunk 0-1 lock, `c` capture a mapped write, `C` a mapped read with the data line
 opcode fetch from a mapped chunk and the 2 us after it, `A` the same for any
 fetch, `a` which cycles find /BE low (by type and chunk), `b` /BE's release
 after owned cycles, `p` and `P` (with the 2068 held in reset) /BE by hand,
-read directly and through the capture, `mCB` OWN of chunk C = bank B, `u`
-reboot to BOOTSEL.
+read directly and through the capture, `mCB` OWN of chunk C = bank B, `S`
+the settings (`BASE`, `SIZE`), `u` reboot to BOOTSEL.
 
 ## From BASIC
 
@@ -98,6 +110,29 @@ That prints 111, 222, 222: the last is the leak. With the chunk in DOCK
 
 prints 111, 222, 77. It is `basic/mbdock.bas`; `zmakebas -a 10 -n MBDOCK -o
 build/MBDOCK.TAP basic/mbdock.bas` makes a TAP for the v3 card's SD card.
+
+## Memory test
+
+`memtest/` is the spec's hardware test 2, run from the 2068: every page of
+every bank, written through one chunk (4-7) and read back through another
+(2, 4-7), with a pattern and then its complement. The first bytes of each
+256-byte block hold its own bank, 8K and block number, so aliasing shows as
+a wrong address. About 3 minutes for 64 banks, interrupts off, the border
+showing progress. It erases the board (the RAM disk too) and the 2068's RAM
+from 32768 up, and asks first. Chunks 0-1 (`basic/mbrom.bas`) and 3 (where
+it runs) aren't tested; chunk 2 is only read.
+
+```bash
+python3 firmware/controller/memtest/build.py
+```
+
+makes `memtest/mbmem.tap` (sjasmplus and zmakebas). From the v3 card's
+SD card: `LOAD "tpi:mbmem.tap"`, then `LOAD ""`. It prints
+PASS, or the number of bad pages and the first one's details, and saves the
+13 result bytes as `mbmemres` for tspico-firmware-build's
+`tools/hwcheck.py --megabank`, which carries a copy of the TAP. In ZEsarUX's
+Megabank model it passes, and a planted fault (the bank written where the
+8K number belongs) gives the 1010 bad pages it should.
 
 ## Results
 

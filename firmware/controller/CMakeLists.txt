@@ -18,6 +18,8 @@ pico_generate_pio_header(megabank ${CMAKE_CURRENT_LIST_DIR}/megabank.pio)
 target_link_libraries(megabank
 	pico_stdlib
 	pico_multicore
+	pico_flash
+	hardware_flash
 	hardware_adc
 	hardware_dma
 	hardware_pio
