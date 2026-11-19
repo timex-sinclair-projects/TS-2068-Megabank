@@ -904,48 +904,89 @@ There is no BREAK test inside an operation.
 
 ### From BASIC
 
+As built (phase 5, tspico-firmware-build: `src/TS/ramdisk.py` and
+`tspico.py`'s `RD_*`). Only the Megabank ROM (2.5) has the mover, so on any
+other ROM an `r:` command is Report J, "r: needs the Megabank ROM". CAT,
+ERASE, FORMAT, MOVE and COPY already reach the firmware as `tpi:dir`,
+`tpi:erase`, `tpi:format`, `tpi:ren` and `tpi:copy` with the name as typed
+(the 2.4 disk module), so `r:` names needed no ROM change beyond phase 4's.
+
 | Command | Does |
 |---|---|
-| `SAVE "r:name" …` | every form `SAVE` takes: `LINE`, `CODE`, `SCREEN$`, `DATA` |
-| `LOAD "r:name"`, `VERIFY "r:name"`, `MERGE "r:name"` | as from tape, with the same reports |
-| `CAT "r:"` | the directory, with free space |
-| `ERASE "r:name"` | delete |
-| `MOVE "tpi:name" TO "r:name"`, and back | copy between the SD card and the RAM disk; MOVE copies, as it does today |
-| `FORMAT "r:"` | create an empty RAM disk (asks Y/N, as `tpi:` FORMAT does) |
-| `SAVE "tpi:ram backup name"` / `"tpi:ram restore name"` | the whole RAM disk to or from an image file on the SD card |
-| `SAVE "tpi:ram"` | board found or not, `BASE`, `SIZE`, battery, write-protect switch, RAM disk size and free space |
+| `SAVE "r:name" …` | every form `SAVE` takes: `LINE`, `CODE`, `SCREEN$`, `DATA`. A file of the same name is replaced |
+| `LOAD "r:name"`, `VERIFY "r:name"`, `MERGE "r:name"` | as from tape, with the same reports; a missing name is F |
+| `CAT "r:"` | the directory, by name, with free space |
+| `ERASE "r:name"` | delete one file |
+| `ERASE "r:pattern"` (`*`, `?`) | the first time, says which files it would erase; the same statement again within a minute, the disk unchanged, erases them **(decided in the build: see below)** |
+| `MOVE "r:a" TO "r:b"` | rename. MOVE between the card and the RAM disk is Report Q: MOVE renames on one disk |
+| `COPY "name" TO "r:[name]"`, `COPY "r:name" TO "name"` | copy between the SD card and the RAM disk: a `.tap`'s first file (a header and its data block) to the RAM disk, a file from it as a `.tap` of two blocks. **COPY copies and MOVE renames, as the 2.4 disk module already has them** (the draft had MOVE copying) |
+| `COPY "r:a" TO "r:b"` | a copy on the board (op 6) |
+| `FORMAT "r:"`, `FORMAT "r:size"` | a new, empty RAM disk at the top of the board: half the board, or *size* K (a multiple of 8). Over a RAM disk that holds files, the first FORMAT says how many and the same FORMAT again within a minute does it |
+| `SAVE "tpi:ram backup name"` / `"tpi:ram restore name"` | the RAM disk's pages, raw, to or from `name.rdi` on the SD card; a restore goes to the top of the board whatever board it came from, and over files asks to be repeated, as FORMAT does |
+| `SAVE "tpi:ram"` | board found or not, `BASE`, `SIZE`, version, battery, write-protect switch, RAM disk size, pages, files and free space |
 
-Names follow the tape rules (up to 10 characters), so a file moves between
-tape, SD card and RAM disk unchanged. Because `LOAD "r:name"` goes through
-the ROM's own LOAD, a BASIC program, arrays and `SCREEN$` all behave exactly as
-they do from tape.
+**Repeat to confirm, not Y/N (decided in the build).** The draft had FORMAT
+ask Y/N. It can't: the mover's operations come before the command's answer,
+and a Y/N prompt *is* the answer (function 86h), so nothing can be written
+after it. Asking first and acting on a second command needs no ROM change
+and no state but a minute-long note of what was asked.
+
+**Reports.** No board, no RAM disk (unformatted, or a superblock that fails
+its checks) and the write-protect switch are J; a full disk or a full
+directory is Q; a missing name is F; a VERIFY that differs, a LOAD of the
+wrong type (the ROM asks for another header) or a length that doesn't match
+is R. A SAVE, LOAD or VERIFY answers with the bare status (it is in the
+middle of the statement); the other commands print their message as `tpi:`
+commands do (errors always, the rest with `tpi:verbose`).
+
+Names follow the tape rules (1 to 10 characters), so a file moves between
+tape, SD card and RAM disk unchanged; they compare exactly, as a tape's do.
+Because `LOAD "r:name"` goes through the ROM's own LOAD, a BASIC program,
+arrays and `SCREEN$` all behave exactly as they do from tape.
 
 ### Where it lives on the board
 
-The RAM disk occupies **the top of the board's banks**, growing down; banks
-below it are free for programs. `FORMAT "r:"` asks for a size (default: half
-the board).
+As built (phase 5). The RAM disk is **pages first to last at the top of the
+board** (last is always the board's last page), so the banks below are free
+for programs and ZXDesk's first bank stays clear. The top page holds the
+metadata, the pages below it the data:
 
-- **Superblock** in the first 256 bytes of the RAM disk's top page: a magic
-  number ("TSRD"), format version, the first and last page of the RAM disk, the
-  cluster size, a **generation counter**, and a checksum.
-- **Allocation bitmap** and **directory** in the rest of the top page(s).
-  A directory entry is 32 bytes: the name, the 17-byte tape header's fields
-  (type, length, start, program/array parameters), the first cluster and
-  length, flags.
+- **Superblock**, 32 bytes at the top page's 0000h: "TSRD", format version,
+  log2 of the cluster size, the first and last page, a **generation
+  counter**, the directory's high-water mark (slots below it are read), and a
+  16-bit sum.
+- **Staging**, 17 bytes at 0100h: a SAVE's header is copied there (op 1) and
+  read back (op 4), since the mover has no 2068-to-Pico operation.
+- **Directory**, 224 entries of 32 bytes from 0400h: a used mark, the 17-byte
+  tape header (whose name is always the entry's name), the first cluster,
+  the length, the data block's flag, the generation it was written at, and a
+  check byte, last. LOAD copies the header to the 2068 straight from the
+  entry.
+- **No allocation bitmap (decided in the build).** Which clusters are used
+  follows from the entries, so nothing can disagree with them after a power
+  cut. A file's data is written first, then its entry in one operation (its
+  check byte lands last, so a cut entry fails its check), then the
+  superblock; a replaced file's old entry goes only after that, and of two
+  entries of one name the newer generation wins. A power cut during a SAVE
+  loses at most the file being written.
 - **Files are contiguous**, in 1K clusters, and files of 8K or more start on a
   page boundary. A program can then map a file's pages directly: `LOAD
   "r:icons"` once, then page the icons in by number. When free space is too
-  fragmented for a new file, the firmware compacts the disk with op 6.
-- **Caching.** The firmware reads the superblock (op 4, 256 bytes) at the start
-  of every `r:` command and re-reads the directory only if the generation
-  counter changed. Every change to the directory increments it. That covers
-  resets, power cycles and a second TS-Pico.
+  fragmented for a new file, the firmware compacts the disk with op 6, each
+  file in pieces no longer than the distance it moves (op 6 doesn't handle
+  overlapping runs). A power cut during compaction can lose the file being
+  moved.
+- **Caching.** The firmware reads op 7 and the superblock (32 bytes) at the
+  start of every `r:` command and re-reads the directory (high-water x 32
+  bytes) only if the generation counter changed. Every change to the
+  directory increments it. That covers resets, power cycles and a second
+  TS-Pico.
 
 **Allocating pages for a program**, so programs and files never collide, is
 a `tpi:ram alloc` command that reserves pages below the RAM disk and records
-them in the superblock. Its exact form is for Jon, the GUI author, to shape (open
-question 8).
+them in the superblock (0020h-00FFh of the top page are free for it). Its
+exact form is for Jon, the GUI author, to shape (open question 8); not in
+phase 5.
 
 ## Channels (phase 9)
 
@@ -1211,7 +1252,9 @@ That's a few dozen lines on the existing, proven path: the same mechanism
 that already follows F4h and FFh. Owner writes are I/O cycles, which last
 over a microsecond, so the table is current before the next memory read.
 
-**Core 0 (Python): the RAM disk.** A new module beside `extcmd.py`:
+**Core 0 (Python): the RAM disk.** Built in phase 5: the file system in a
+new module, `TS/ramdisk.py` (pure, host-tested), the bus side in `tspico.py`
+(`RD_MOVER` and the `RD_*` handlers):
 
 - the `r:` file system: the format above, allocation, compaction;
 - the mover's side of the protocol: sending operations, checking status;
@@ -1219,8 +1262,10 @@ over a microsecond, so the table is current before the next memory read.
 - `tpi:ram` (info, backup, restore, alloc);
 - later (phase 9), the `r:` channels' OPEN, growth and CLOSE, the open-file
   slots and the open-stream mask ([Channels](#channels-phase-9));
-- what the ROM reports at boot: board found, `BASE`, `SIZE`, `STATUS`.
-  The firmware can't read the board itself, since it can't run bus cycles.
+- the board's state: board found, `BASE`, `SIZE`, `STATUS`, from mover op 7
+  at the start of every `r:` command (open question 3: the boot reports
+  nothing). The firmware can't read the board itself, since it can't run bus
+  cycles.
 
 ## PicoVideo
 
@@ -1385,6 +1430,10 @@ hardware: neither this board nor the v3 card can run bus cycles.
    would leak.
 5. **Firmware host tests** for the file system: format, save/load/erase,
    fragmentation and compaction, a corrupt superblock, the generation counter.
+   **Done (phase 5):** tspico-firmware-build's `src/test/ramdisk_hosttest.py`
+   (in CI), with power cuts mid-entry and between a replace's two writes, a
+   full directory and write-protect besides; `tools/emu/megabank_smoke.py`
+   runs every `r:` command end to end in ZEsarUX's model.
 6. **The controller's firmware** on an RP2350B development board, with the
    v3 card's PIO programs as the starting point: register writes and reads,
    the owner table, /BE and the page bits against a logic analyser, before
@@ -1438,7 +1487,12 @@ reference for what it changes.
    **Built (2026-11-19)** as test ROM 2.5 in tspico-firmware-build
    ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)); hardware tests
    to come.
-5. **Firmware: the RAM disk** and `tpi:ram`.
+5. **Firmware: the RAM disk** and `tpi:ram`. **Built (2026-11-19)** in the
+   emulator: tspico-firmware-build, `src/TS/ramdisk.py` and `tspico.py`'s
+   `RD_*` (PR #427); host-tested (`src/test/ramdisk_hosttest.py`,
+   `rd_cmds_hosttest.py`) and run end to end in ZEsarUX's Megabank model
+   (`tools/emu/megabank_smoke.py`, 39/39). Not yet on
+   hardware. `tpi:ram alloc` is still to shape (open question 8).
 6. **PicoVideo** update (its own repo).
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
    JLCPCB), prototype, hardware tests. **Routed (2026-10-18; re-routed 2026-10-19 with /INT and /NMI):** schematic
