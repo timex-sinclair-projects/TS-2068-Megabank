@@ -1139,7 +1139,9 @@ open file's bytes, inside an extent the firmware gave it.
   T-states per character, about 0.15 ms, on top of the stub, thunk and
   GUARDED cost every `f:` character already pays. No exchange with the
   TS-Pico, no SD card, nothing to wait for. (Estimates; measure in the
-  emulator.)
+  emulator.) **Measured (2026-11-19): about 4.3 ms a character** on the
+  board, 3.8 ms in ZEsarUX, with the entry included
+  ([Testing](#testing), Channels step 8).
 - **No buffers.** Each `PRINT #` byte is on the board when `RST 10h`
   returns, and `INPUT #` reads one byte at a time with no read-ahead. So the
   record is small (256 bytes, mostly pad, against `f:`'s 512), a `u` stream
@@ -1558,6 +1560,43 @@ hardware: neither this board nor the v3 card can run bus cycles.
 7. `OPEN #3,"r:…"` with `LLIST`, then `CLOSE #3`: P must come back.
 8. The cost per character, against the estimate.
 
+**Run on hardware (2026-11-19)** on a v3 card in a 2068 with the board:
+ROM 2.5 in flash slot 1, firmware `40cd82d` (tspico-firmware-build#430),
+`tools/hwcheck.py --megabank-channels` with `basic/SD/TAP/test/mbchan.bas`
+and `mbchpg.bas` (the same programs pass in ZEsarUX). **All 40 passed**
+(NEW on a repeat), **2 for information:**
+
+- Steps 1, 2, 3, 4 and 7: all 32 automatic tests pass. That covers every
+  mode, records with `TAB` both ways, Q for a record overflow, `TAB 0` with
+  data and `INPUT #` on a `w` stream, binary against text, listings with a
+  pattern, F for `ERASE` of an open file, and a 20000-byte file that must
+  move to grow past another. A board page in each of chunks 4–7 survives
+  3000 characters, 32 End of file errors in a row leave the stream working,
+  `f:` and `r:` open together close cleanly in all six orders, and `LLIST`
+  into `OPEN #3,"r:list"` hands P back at `CLOSE #3`.
+- Step 5: a reset and a power-off each keep the file to its last CR, and
+  `ERASE` works after both. **NEW** keeps `nw` at 5 bytes (`kept` and its
+  CR, not the unterminated `lost`), and `ERASE` works. The first try gave
+  10 bytes, `kept` CR `lost` CR, which is what the second `PRINT #`
+  without its trailing `;` gives; typed again with it, 5.
+- Step 6: with the switch on, `PRINT #4;"two"` stops with J, and `CLOSE #4`
+  with the switch off is 0 OK. But `wp` is then **8 bytes**, `one` CR `two`
+  CR: CLOSE passes the ROM's own length, which counted the bytes the board
+  refused, so the file's last 4 bytes are whatever the board held. A fix:
+  after J, the stream's length goes back to the slot's last written-back
+  value.
+- Step 8, **the cost: about 4.3 ms a character**, timed from the firmware's
+  telemetry. 2000 characters through `PRINT #` took 11.17 s, the same loop
+  without them 2.60 s, and ZEsarUX gives 3.8 ms. That is nearly 30 times
+  the 0.15 ms estimate, and the estimate left out the per-character entry.
+  Reading the code puts about 4,000 T-states (1.1 ms) in the `r:` code
+  itself, and most of the rest in the entry around it, both ways, every
+  character: the HOME stub's `CALL 03FC`, the stock bank call through its
+  RAM copy at 65D0h, and `GUARDED`'s trap setup and teardown. The window
+  is mapped and unmapped (`MV_WIN`, `MV_MAP`, `MV_UNMAP`) for every byte,
+  and every CR writes the length and position back through four more.
+  [Open questions](#open-questions) 21 has the way out.
+
 ## Phases
 
 Each phase is its own branch and PR, and each PR updates the programmer's
@@ -1613,9 +1652,10 @@ reference for what it changes.
    (2026-11-19)** ([Channels as built](#channels-as-built)): the Z80 model
    (`src/test/rom_rchan_hosttest.py`, 30/30, the ROM against the firmware's
    own `ramdisk.Disk`), the firmware's host tests (`ramdisk_hosttest.py`,
-   78/78) and ZEsarUX end to end (`tools/emu/megabank_smoke.py`, 54/54);
-   not yet on hardware. Testing steps 2, 3, 4, 6, 7 and 8 under Channels are
-   still to run.
+   78/78) and ZEsarUX end to end (`tools/emu/megabank_smoke.py`, 54/54).
+   **On hardware (2026-11-19):** every Channels testing step on a v3 card
+   with ROM 2.5 and firmware `40cd82d`, all 40 passed (NEW on a repeat),
+   with a character costing about 4.3 ms ([Testing](#testing), Channels).
 
 ## Open questions
 
@@ -1827,6 +1867,20 @@ reference for what it changes.
     board-owned chunk's writes out of HOME RAM whatever F4h says. The TS-Pico
     must also serve the EXROM outside chunks 0–1. Raised by David
     (2026-11-19); the bank API already lets the EXROM go in any chunk.
+21. **A fast entry for channel I/O.** A character through `r:` costs about
+    4.3 ms on the board ([Testing](#testing), Channels step 8). Most of it
+    is the stock Timex bank call, which every `f:` and `r:` character pays
+    going into the module and coming back. That mechanism was broken as
+    designed and nothing used it, so the ROM is free to replace it. Proposed:
+    - a HOME stub that does `DI`, switches the EXROM in with one or two
+      `OUT`s, calls the module, switches back and does `EI`, with no
+      bank-call frame and an error trap set once per statement;
+    - a window that stays mapped for a stream's current 8K page, remapped
+      only when the position leaves the page or the window chunk is wanted;
+    - the length and position written back at CLOSE, at a grow and when a
+      page fills, not at every CR (this changes what NEW and a reset keep).
+    Target: a few hundred T-states a character. Raised by David
+    (2026-11-19).
 
 ## Sources
 
