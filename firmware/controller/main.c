@@ -385,12 +385,22 @@ static inline int S(int i, uint g) {
 
 static void la_setup(uint window, uint trig_pin) {
     pio_set_sm_mask_enabled(pio_la, (1u << sm_la) | (1u << sm_trig), false);
-    if (ch_la < 0) {
+    // The SDK changes a PIO's GPIO base only with no programs loaded (it
+    // returns an error otherwise, and the window stays where it was: before
+    // this, GP32-47 were never sampled, and their rows showed GP0-15).
+    static bool loaded = false;
+    if (!loaded || pio_get_gpio_base(pio_la) != window) {
+        if (loaded) {
+            pio_remove_program(pio_la, &la_program, off_la);
+            pio_remove_program(pio_la, &trig_program, off_trig);
+        }
+        int rc = pio_set_gpio_base(pio_la, window);
+        hard_assert(rc == PICO_OK);
         off_la = pio_add_program(pio_la, &la_program);
         off_trig = pio_add_program(pio_la, &trig_program);
-        ch_la = dma_claim_unused_channel(true);
+        loaded = true;
     }
-    pio_set_gpio_base(pio_la, window);
+    if (ch_la < 0) ch_la = dma_claim_unused_channel(true);
     la_sh = window;
 
     pio_sm_config c = la_program_get_default_config(off_la);
@@ -626,6 +636,69 @@ static void be_by_chunk(void) {
     }
 }
 
+// With the 2068 held in reset (the bus idle): BE_REQ by hand, low then high
+// then low, reading the bus's /BE back each time. Shows whether U5 pulls /BE
+// and whether anything pulls it up. BE_REQ goes back to the PIO after.
+static void be_static(void) {
+    if (gpio_get(PIN_NRESET)) {
+        printf("\n/RESET is high: hold the 2068 in reset first.\n");
+        return;
+    }
+    gpio_put(PIN_BE_REQ, 0);
+    gpio_set_dir(PIN_BE_REQ, GPIO_OUT);
+    gpio_set_function(PIN_BE_REQ, GPIO_FUNC_SIO);
+    printf("\nBE_REQ by hand, /BE read back (low samples of 10000):\n");
+    for (int k = 0; k < 3; k++) {
+        bool req = k == 1;
+        gpio_put(PIN_BE_REQ, req);
+        busy_wait_us_32(200);
+        uint lows = 0;
+        for (int i = 0; i < 10000; i++) lows += !gpio_get(PIN_NBE_L);
+        printf("  BE_REQ %d: /BE low %u\n", req, lows);
+    }
+    gpio_put(PIN_BE_REQ, 0);
+    // The release: how long /BE stays low after BE_REQ drops (sio reads).
+    gpio_put(PIN_BE_REQ, 1);
+    busy_wait_us_32(50);
+    uint32_t irq = save_and_disable_interrupts();
+    gpio_put(PIN_BE_REQ, 0);
+    uint n = 0;
+    while (!gpio_get(PIN_NBE_L) && n < 1000000) n++;
+    restore_interrupts(irq);
+    printf("  after release, /BE read low for %u polls (about 10 ns each)\n", n);
+    pio_gpio_init(pio_bus, PIN_BE_REQ);
+}
+
+// The capture itself, with the 2068 in reset: BE_REQ toggled by hand under
+// the LA, then each sample's BE_REQ and /BE bits compared with gpio_get.
+static void la_selftest(void) {
+    if (gpio_get(PIN_NRESET)) {
+        printf("\n/RESET is high: hold the 2068 in reset first.\n");
+        return;
+    }
+    gpio_put(PIN_BE_REQ, 0);
+    gpio_set_dir(PIN_BE_REQ, GPIO_OUT);
+    gpio_set_function(PIN_BE_REQ, GPIO_FUNC_SIO);
+    la_setup(16, PIN_NMREQ);
+    la_arm();
+    for (int k = 0; k < 6; k++) { gpio_put(PIN_BE_REQ, k & 1); busy_wait_us_32(4); }
+    uint old = la_stop();
+    for (uint i = 0; i < LA_N; i++) lin[i] = la_buf[(old + i) % LA_N];
+    gpio_put(PIN_BE_REQ, 0);
+    pio_gpio_init(pio_bus, PIN_BE_REQ);
+    printf("\nLA self-test: edges of BE_REQ (GP27) and /BE (GP42) and WINH (GP38) in the ring, sample numbers\n");
+    const uint pins[3] = {PIN_BE_REQ, PIN_NBE_L, PIN_WINH};
+    const char *nm[3] = {"BE_REQ", "/BE", "WINH"};
+    for (int p = 0; p < 3; p++) {
+        printf("  %-6s starts %d:", nm[p], S(0, pins[p]));
+        int e = 0;
+        for (int i = 1; i < LA_N && e < 16; i++)
+            if (S(i, pins[p]) != S(i - 1, pins[p])) { printf(" %d", i); e++; }
+        printf("\n");
+    }
+    printf("  raw word 0: %08lx, last: %08lx\n", (unsigned long)lin[0], (unsigned long)lin[LA_N - 1]);
+}
+
 // /BE's release, over many captures: for every cycle the board owns, when the
 // bus's /BE is back high after /MREQ rises, and how long that leaves before
 // the next /MREQ falls. By the cycle (opcode fetch, read, write) and what
@@ -804,6 +877,8 @@ static void help(void) {
            "  B   capture an opcode fetch from a mapped chunk and the 2 us after it\n"
            "  A   the same for any opcode fetch (/BE with nothing mapped)\n"
            "  a   which cycles find /BE low, by type and chunk\n"
+           "  p   with the 2068 in reset: BE_REQ by hand, /BE read back\n"
+           "  P   with the 2068 in reset: the same under the capture (LA self-test)\n"
            "  k   toggle the chunk 0-1 lock (the TS-Pico serves the ROM there)\n"
            "  u   reboot to BOOTSEL\n",
            VERSION, (unsigned long)(clock_get_hz(clk_sys) / 1000000));
@@ -830,6 +905,8 @@ int main(void) {
         case 'B': la_fetch(true); break;
         case 'A': la_fetch(false); break;
         case 'a': be_by_chunk(); break;
+        case 'p': be_static(); break;
+        case 'P': la_selftest(); break;
         case 'm': {
             // m<c><b>: OWN of chunk c = bank b (digits), from the console
             int c = getchar_timeout_us(2000000) - '0', b = getchar_timeout_us(2000000) - '0';

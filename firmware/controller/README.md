@@ -61,7 +61,9 @@ chain, the page table, which page pins moved in 50 ms), `v` battery, `k` the
 chunk 0-1 lock, `c` capture a mapped write, `C` a mapped read with the data lines, `B` an
 opcode fetch from a mapped chunk and the 2 us after it, `A` the same for any
 fetch, `a` which cycles find /BE low (by type and chunk), `b` /BE's release
-after owned cycles, `mCB` OWN of chunk C = bank B, `u` reboot to BOOTSEL.
+after owned cycles, `p` and `P` (with the 2068 held in reset) /BE by hand,
+read directly and through the capture, `mCB` OWN of chunk C = bank B, `u`
+reboot to BOOTSEL.
 
 ## From BASIC
 
@@ -111,8 +113,9 @@ slot 2, SW2 closed):
   question 2.
 - At 250 MHz (v2): still 111, 222, 222. The capture (`c`, with
   `80 POKE 40960,PEEK 40960: GO TO 80` running), in ns from /MREQ falling:
-  /BE low at +40, /CE1_0 and WINH at +80, /WR low at +280, /MREQ and /WR
-  high at +560, /BE high again at +640. /BE is down well before /WR, so the
+  BE_REQ on at +40, /CE1_0 at +80, /WR low at +280, /MREQ and /WR high at
+  +560 (that capture's /BE and WINH rows weren't real: see below; /BE is
+  in fact low at +32 to +40). /BE is down well before /WR, so the
   write leak is the 2068's: its HOME RAM takes a write even with /BE low.
 - With the chunk in DOCK as well (`OUT 244,32`), writes reach the SRAM and
   the 2068's RAM keeps its byte, but reads came back wrong: the v3 card
@@ -138,16 +141,18 @@ slot 2, SW2 closed):
   `pull` from then on. Nothing drove the chunk's reads. Core 1 now sends
   `done` when it finds `io` waiting there with both FIFOs empty (`r`:
   "unstuck"); after that, power cycles of the 2068 leave the board working.
-- **/BE readback (2026-11-19):** the bus's /BE as the board reads it back
-  (nBE_L) no longer follows anything: with nothing mapped, `a` found it low
-  on 50-73% of the 2068's own cycles, and `A` and `B` show it flipping on
-  /M1's edges and staying high through a read the board owned. The board's
-  /BE itself works (`mbexrom.tap` still gives 111, 222, 77), so board 1's
-  readback input, U4 pin 18 from edge finger A29, is open. The "slow rise"
-  in the captures above is that, not the bus.
-- **The boards swapped** (this board in slot 1, the v3 card in slot 2, SW2
-  closed): the readback is the same, so its fault is on the board. DOCK,
-  EXROM and chunks 0-1 all pass.
+- **/BE timing, board 2 (2026-11-19, slot 1, the v3 card in slot 2):** the
+  capture had never sampled GP32-GP47 (the SDK moves a PIO's GPIO window
+  only with no programs loaded; `la_setup` now unloads them first), so the
+  /BE and WINH rows of every earlier capture were GP0-GP15, the "slow
+  rise" included. Measured properly (`b`, `mbloop.tap` running): /BE low
+  32-40 ns after /MREQ falls, BE_REQ off 16-24 ns after it rises, /BE high
+  64-96 ns after it rises; at least 56 ns before the next cycle (a refresh)
+  and 192 ns before the next owned one. With nothing mapped (`a`), /BE is
+  low only on chunk 0-1 reads (the v3 card's ROM). `p` and `P`, with the
+  2068 held in reset, check the readback and the capture.
+- **Boards swapped** (board 1, then board 2, in slot 1; the v3 card in slot
+  2, SW2 closed): DOCK, EXROM and chunks 0-1 all pass on both.
 - First run, before a fix: the DMA chain never ran (an endless transfer
   count of 0; the RP2350 needs a non-zero count with the endless mode), so
   the SRAM was never selected and mapped reads returned whatever the data

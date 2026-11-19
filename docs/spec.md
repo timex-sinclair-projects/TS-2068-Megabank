@@ -634,8 +634,8 @@ path does nothing; the owner table does its job instead. So:
 - Closing the switches is harmless to both cards, since neither reads
   BUSISO.
 - **Found on board 1 (2026-11-18):** in slot 2 with SW2 open, the board's
-  /BE readback stayed high with the v3 card in slot 1. In that arrangement
-  the board's own /BE would not reach the 2068 either.
+  own /BE would not reach the 2068. (The readback said so too, but the
+  capture didn't sample /BE then: see testing step 2.)
 
 **IOA5 is not used.** It is free on the bus, and the shipped ROM's bank
 protocol gated register writes with it. But it is a pin of the AY's port A,
@@ -1412,10 +1412,11 @@ reference for what it changes.
    **Not our timing (2026-11-18, 250 MHz).** The same test gives 111, 222,
    222 at 250 MHz. The controller's own capture (console `c`: GP16-GP47
    every 8 ns, from PIO2) of a mapped write to chunk 5, in ns from /MREQ
-   falling: BE_REQ and nDOE at +40, the bus's /BE low at +40, /CE1_0 and
-   WINH low at +80, /WR low at +280, /MREQ and /WR high at +560, /BE
-   released at +576 and back high at +640. /BE is down 240 ns before /WR,
-   and the 2068's HOME RAM still takes the write.
+   falling: BE_REQ and nDOE at +40, /CE1_0 low at +80, /WR low at +280,
+   /MREQ and /WR high at +560, BE_REQ off at +576. (The /BE and WINH rows
+   of that capture were not real: see below. Measured properly on board 2,
+   /BE is low at +32 to +40.) /BE is down about 240 ns before /WR, and the
+   2068's HOME RAM still takes the write.
    **Answered: set the chunk's HSR bit (2026-11-18).** With `OUT 244,32`
    (chunk 5 to DOCK) as well, writes reach the board's SRAM and the 2068's
    RAM keeps its byte (77 before, 77 after). Reads in DOCK then came back
@@ -1424,27 +1425,29 @@ reference for what it changes.
    in DOCK. The rule is in [Sharing the bus](#sharing-the-bus). Later the
    same day, with the v3 card yielding owned chunks: DOCK, EXROM (FFh bit 7)
    and chunks 0-1 over the ROM all pass.
-   **The "slow rise" was the readback (2026-11-19).** Later captures at 250
-   MHz showed the bus's /BE readback (nBE_L, U4's spare channel) low through
-   refreshes and rising 112 ns after release. A survey with nothing mapped
-   (console `a`, 3 s of the bus at the BASIC prompt) found it low on 50-73%
-   of the 2068's own ROM and RAM cycles, which the 2068 could not survive if
-   /BE were really low; and fetch captures (`A`, `B`) show it flipping on
-   /M1's edges, in step or inverted, and staying high through a read the
-   board owned with BE_REQ on. That is a floating input picking up its
-   neighbours (U4 pins 16 and 17 carry /M1 and /RFSH), not the bus. The
-   board's /BE itself works: the EXROM test, which fails without it, still
-   gives 111, 222, 77. So board 1's readback path, edge finger A29 to U4
-   pin 18, is open (a joint or the trace), and on 2026-11-18 it worked, so
-   it may be intermittent. The /BE rise between cycles has not yet been
-   measured with a working readback or a scope.
-   **The boards swapped (2026-11-19):** this board in slot 1, the v3 card in
-   slot 2 behind SW2. The readback misbehaves the same way (`a` gave almost
-   the same counts), so its fault is on the board, not the extender's /BE
-   chain. DOCK (`mbdock`), EXROM (`mbexrom`) and chunks 0-1 (`mbrom`) all
-   pass, so the v3 card's /BE still reaches the 2068 from slot 2, and the
-   card still yields the board's chunks. Still open: the rise between
-   cycles; other 2068s and SCLD revisions; slot 3, and PicoVideo fitted.
+   **/BE's timing, measured (2026-11-19, board 2 in slot 1, the v3 card in
+   slot 2 behind SW2, 250 MHz).** The capture had never sampled GP32-GP47:
+   the SDK moves a PIO's GPIO window only with no programs loaded, the
+   console loaded them first, and the call failed silently, so the rows for
+   the bus's /BE (GP42) and WINH (GP38) showed GP0-GP15. Every earlier /BE
+   timing from it, the "slow rise" (released at +576, high at +640 or
+   later) included, was that. Fixed (`la_setup`), and checked with the 2068
+   held in reset: BE_REQ by hand pulls /BE low, and it reads high again
+   within about 30 ns of release. Then with code running from a bank in
+   chunk 5 (`basic/mbloop.bas`; console `b`, 5 s, about 205,000 owned
+   cycles), in ns: /BE low 32-40 after /MREQ falls; BE_REQ off 16-24 after
+   /MREQ rises; /BE back high 64-96 after it rises (about 50-70 ns after
+   release, with the v3 card's 2.2 k pull-up). The tightest gap is a fetch
+   followed by its refresh, 56-80 ns, and the board never pulls /BE on a
+   refresh; between two owned cycles there are at least 192 ns. With
+   nothing mapped (`a`), /BE is low only on chunk 0-1 reads, the v3 card
+   serving its ROM, and it releases 80 ns after /MREQ rises.
+   **Board 2, and the boards swapped.** Board 1 in slot 1 with the v3 card
+   in slot 2, then board 2 in slot 1: DOCK (`mbdock`), EXROM (`mbexrom`)
+   and chunks 0-1 (`mbrom`) pass on both. The v3 card's /BE still reaches
+   the 2068 from slot 2, and the card still yields the board's chunks.
+   Still open: other 2068s and SCLD revisions; slot 3, and PicoVideo
+   fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.
@@ -1507,12 +1510,11 @@ reference for what it changes.
     (hardware test 3), with the DV30 too if it is fitted.
 13. **Where the bus's /BE pull-up is.** The board's /BE driver is open-drain
     and the board adds no pull-up, relying on the one already on the bus.
-    **Answered in part (2026-11-19):** it is on the v3 card, 2.2 k to 5 V,
-    added after the card's first design. Every test so far passes with it
-    (the board in slot 2 behind SW2). Still to measure: the rise between
-    cycles, with a scope or a working readback (board 1's readback is open;
-    testing step 2), and with the v3 card not fitted, where nothing would
-    pull /BE up at all (R3's pad, DNP, is for that).
+    **Answered (2026-11-19):** it is on the v3 card, 2.2 k to 5 V, added
+    after the card's first design, and it is enough: /BE is back high 50-70
+    ns after the board releases it, at least 56 ns before the next cycle
+    (testing step 2). Still open: a 2068 without the v3 card, where nothing
+    would pull /BE up at all (R3's pad, DNP, is for that).
 14. **Channels** ([Channels](#channels-phase-9)): agree the recommendations
     (CHANS records with the `f:` hooks, direct access through the window,
     the slots and the open-stream mask, text mode in the ROM). Still open:
