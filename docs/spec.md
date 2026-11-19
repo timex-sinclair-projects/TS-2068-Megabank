@@ -1423,10 +1423,22 @@ reference for what it changes.
    which the whole test passed: 111, 222, 77, and 33 written HOME and read
    in DOCK. The rule is in [Sharing the bus](#sharing-the-bus). Later the
    same day, with the v3 card yielding owned chunks: DOCK, EXROM (FFh bit 7)
-   and chunks 0-1 over the ROM all pass. Still open: /BE's slow rise (+576
-   to +640, the pull-up, open question 13) against the next cycle, which
-   here began at +696; other 2068s and SCLD revisions; every slot, and
-   PicoVideo fitted.
+   and chunks 0-1 over the ROM all pass.
+   **The "slow rise" was the readback (2026-11-19).** Later captures at 250
+   MHz showed the bus's /BE readback (nBE_L, U4's spare channel) low through
+   refreshes and rising 112 ns after release. A survey with nothing mapped
+   (console `a`, 3 s of the bus at the BASIC prompt) found it low on 50-73%
+   of the 2068's own ROM and RAM cycles, which the 2068 could not survive if
+   /BE were really low; and fetch captures (`A`, `B`) show it flipping on
+   /M1's edges, in step or inverted, and staying high through a read the
+   board owned with BE_REQ on. That is a floating input picking up its
+   neighbours (U4 pins 16 and 17 carry /M1 and /RFSH), not the bus. The
+   board's /BE itself works: the EXROM test, which fails without it, still
+   gives 111, 222, 77. So board 1's readback path, edge finger A29 to U4
+   pin 18, is open (a joint or the trace), and on 2026-11-18 it worked, so
+   it may be intermittent. The /BE rise between cycles has not yet been
+   measured with a working readback or a scope. Still open: that; other
+   2068s and SCLD revisions; every slot, and PicoVideo fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.
@@ -1489,8 +1501,12 @@ reference for what it changes.
     (hardware test 3), with the DV30 too if it is fitted.
 13. **Where the bus's /BE pull-up is.** The board's /BE driver is open-drain
     and the board adds no pull-up, relying on the one already on the bus.
-    Confirm where that is (the 2068, or the v3 card) and that it is strong
-    enough for /BE to rise between cycles with the board fitted.
+    **Answered in part (2026-11-19):** it is on the v3 card, 2.2 k to 5 V,
+    added after the card's first design. Every test so far passes with it
+    (the board in slot 2 behind SW2). Still to measure: the rise between
+    cycles, with a scope or a working readback (board 1's readback is open;
+    testing step 2), and with the v3 card not fitted, where nothing would
+    pull /BE up at all (R3's pad, DNP, is for that).
 14. **Channels** ([Channels](#channels-phase-9)): agree the recommendations
     (CHANS records with the `f:` hooks, direct access through the window,
     the slots and the open-stream mask, text mode in the ROM). Still open:

@@ -538,6 +538,198 @@ static void la_capture(bool write) {
     printf("None seen. Map a chunk (OUT 253,5: OUT 252,1) and %s it in a loop.\n", write ? "POKE into" : "PEEK");
 }
 
+// A long window around an opcode fetch from a mapped chunk: the fetch, its
+// refresh and the cycles after, about 2.2 us, with every edge.
+// owned false: any opcode fetch, to see /BE with nothing of the board's.
+static void la_fetch(bool owned) {
+    la_setup(16, PIN_NMREQ);            // trig: any cycle with BE_REQ high
+    uint ns_x10 = 10000000u * LA_DIV / (clock_get_hz(clk_sys) / 1000);
+    printf("\nCapturing: waiting up to 60 s for an opcode fetch%s...\n",
+           owned ? " from a mapped chunk" : "");
+    absolute_time_t until = make_timeout_time_ms(60000);
+    while (!time_reached(until)) {
+        la_arm();
+        busy_wait_us_32(40);
+        pio_interrupt_clear(pio_la, 0);
+        uint32_t irq = save_and_disable_interrupts();
+        absolute_time_t slice = make_timeout_time_ms(20);
+        bool hit = !owned;
+        while (!hit && !time_reached(slice))
+            if (pio_la->irq & 1) { hit = true; break; }
+        if (!hit) { restore_interrupts(irq); continue; }
+        busy_wait_us_32(24);
+        uint old = la_stop();
+        restore_interrupts(irq);
+        for (uint i = 0; i < LA_N; i++) lin[i] = la_buf[(old + i) % LA_N];
+        // The first (owned) fetch with room around it.
+        for (int i = 400; i < LA_N - 400; i++) {
+            if (!((!owned || S(i, PIN_BE_REQ)) && !S(i, PIN_NM1) && !S(i, PIN_NMREQ))) continue;
+            int f, r;
+            if (!la_cycle(i, &f, &r)) break;
+            printf("Opcode fetch from chunk %u, the cycles after it:\n",
+                   (unsigned)(lin[f] >> (PIN_BA13 - la_sh) & 7));
+            la_rows(f - 24, f + 256, f, ns_x10);
+            return;
+        }
+    }
+    printf("None seen. Run code from a mapped chunk (basic/mbloop.bas).\n");
+}
+
+// Which cycles find the bus's /BE low, by type and chunk, over many untriggered
+// captures: low as /MREQ falls (before the board could act: BE_REQ follows at
+// about +40 ns), low at any point, and how many the board owned.
+static void be_by_chunk(void) {
+    static uint32_t n[4][8], at_fall[4][8], any[4][8], own[4][8];
+    static const char *ty[4] = {"fetch", "read", "write", "refresh"};
+    memset(n, 0, sizeof n); memset(at_fall, 0, sizeof at_fall);
+    memset(any, 0, sizeof any); memset(own, 0, sizeof own);
+    la_setup(16, PIN_NMREQ);
+    printf("\nSampling the bus for 3 s...\n");
+    absolute_time_t until = make_timeout_time_ms(3000);
+    uint caps = 0;
+    while (!time_reached(until)) {
+        la_arm();
+        busy_wait_us_32(40);
+        uint old = la_stop();
+        caps++;
+        for (uint i = 0; i < LA_N; i++) lin[i] = la_buf[(old + i) % LA_N];
+        for (int i = 1; i < LA_N - 8; i++) {
+            if (!(S(i - 1, PIN_NMREQ) && !S(i, PIN_NMREQ))) continue;
+            int r = i;
+            while (r < LA_N && !S(r, PIN_NMREQ)) r++;
+            if (r >= LA_N) break;
+            int t;
+            if (!S(i + 4, PIN_NRFSH)) t = 3;
+            else if (!S(i + 4, PIN_NM1)) t = 0;
+            else t = 1;
+            bool b = false, o = false;
+            for (int k = i; k < r; k++) {
+                if (!S(k, PIN_NWR) && t == 1) t = 2;
+                if (!S(k, PIN_NBE_L)) b = true;
+                if (S(k, PIN_BE_REQ)) o = true;
+            }
+            uint c = lin[i + 4] >> (PIN_BA13 - la_sh) & 7;
+            n[t][c]++;
+            if (!S(i, PIN_NBE_L)) at_fall[t][c]++;
+            if (b) any[t][c]++;
+            if (o) own[t][c]++;
+            i = r;
+        }
+    }
+    printf("%u captures. Per chunk: cycles / /BE low as /MREQ falls / /BE low at all / owned\n", caps);
+    for (int t = 0; t < 4; t++) {
+        printf("  %-7s", ty[t]);
+        for (int c = 0; c < 8; c++)
+            if (n[t][c]) printf("  %d: %lu/%lu/%lu/%lu", c, (unsigned long)n[t][c],
+                                (unsigned long)at_fall[t][c], (unsigned long)any[t][c], (unsigned long)own[t][c]);
+        printf("\n");
+    }
+}
+
+// /BE's release, over many captures: for every cycle the board owns, when the
+// bus's /BE is back high after /MREQ rises, and how long that leaves before
+// the next /MREQ falls. By the cycle (opcode fetch, read, write) and what
+// follows it (the fetch's refresh, another owned cycle, one of the 2068's).
+// Times are where the readback (an LVC buffer, about 1.5 V) sees /BE cross.
+typedef struct {
+    uint32_t n, no_gap;                 // no_gap: the next cycle was owned and /BE never rose
+    int lo_min, lo_max;                 // /BE low after /MREQ falls
+    int rel_min, rel_max;               // BE_REQ off after /MREQ rises
+    int rise_min, rise_max;             // /BE high after /MREQ rises
+    int gap_min, gap_max;               // /MREQ falls again after /BE is high
+} be_stat_t;
+
+static void be_stat_add(int *mn, int *mx, int v, bool first) {
+    if (first || v < *mn) *mn = v;
+    if (first || v > *mx) *mx = v;
+}
+
+static void be_stats(void) {
+    static be_stat_t st[3][3];
+    static const char *cyc[3] = {"fetch", "read", "write"};
+    static const char *nxt[3] = {"refresh", "owned", "2068's"};
+    memset(st, 0, sizeof st);
+    la_setup(16, PIN_NMREQ);            // trig: any cycle with BE_REQ high
+    uint ns_x10 = 10000000u * LA_DIV / (clock_get_hz(clk_sys) / 1000);
+    printf("\n/BE release: capturing for 5 s...\n");
+    uint32_t caps = 0, drops = 0;
+    absolute_time_t until = make_timeout_time_ms(5000);
+    while (!time_reached(until)) {
+        la_arm();
+        busy_wait_us_32(40);
+        pio_interrupt_clear(pio_la, 0);
+        uint32_t irq = save_and_disable_interrupts();
+        absolute_time_t slice = make_timeout_time_ms(20);
+        bool hit = false;
+        while (!time_reached(slice))
+            if (pio_la->irq & 1) { hit = true; break; }
+        if (!hit) { restore_interrupts(irq); continue; }
+        busy_wait_us_32(24);
+        uint old = la_stop();
+        restore_interrupts(irq);
+        if (pio_la->fdebug & (1u << (PIO_FDEBUG_RXSTALL_LSB + sm_la))) { drops++; continue; }
+        for (uint i = 0; i < LA_N; i++) lin[i] = la_buf[(old + i) % LA_N];
+        caps++;
+        // Each owned cycle: a /MREQ-low run with BE_REQ high somewhere in it.
+        for (int i = 1; i < LA_N; i++) {
+            if (!(S(i - 1, PIN_NMREQ) && !S(i, PIN_NMREQ))) continue;
+            int f = i, r = f;
+            while (r < LA_N && !S(r, PIN_NMREQ)) r++;
+            if (r >= LA_N) break;
+            bool owned = false, m1 = false, wr = false;
+            int lo = -1;
+            for (int k = f; k < r; k++) {
+                if (S(k, PIN_BE_REQ)) owned = true;
+                if (!S(k, PIN_NM1)) m1 = true;
+                if (!S(k, PIN_NWR)) wr = true;
+                if (lo < 0 && !S(k, PIN_NBE_L)) lo = k;
+            }
+            if (!owned || lo < 0) { i = r; continue; }
+            int rel = r;
+            while (rel < LA_N && S(rel, PIN_BE_REQ)) rel++;
+            int n = r;                      // the next /MREQ fall
+            while (n < LA_N && S(n, PIN_NMREQ)) n++;
+            if (n >= LA_N) break;
+            int hi = r;
+            while (hi < n && !S(hi, PIN_NBE_L)) hi++;
+            int ct = m1 ? 0 : wr ? 2 : 1;
+            int nk = !S(n, PIN_NRFSH) ? 0 : 1;
+            if (nk == 1) {                  // owned if BE_REQ goes high in that cycle
+                bool o2 = false;
+                for (int k = n; k < LA_N && !S(k, PIN_NMREQ); k++)
+                    if (S(k, PIN_BE_REQ)) { o2 = true; break; }
+                if (!o2) nk = 2;
+            }
+            be_stat_t *s = &st[ct][nk];
+            if (hi >= n) { s->no_gap++; i = r; continue; }
+            bool first = s->n == 0;
+            s->n++;
+            be_stat_add(&s->lo_min, &s->lo_max, lo - f, first);
+            be_stat_add(&s->rel_min, &s->rel_max, rel - r, first);
+            be_stat_add(&s->rise_min, &s->rise_max, hi - r, first);
+            be_stat_add(&s->gap_min, &s->gap_max, n - hi, first);
+            i = r;
+        }
+    }
+    printf("%lu captures (%lu dropped samples, skipped). ns; /MREQ rise is 0 for the last three:\n",
+           (unsigned long)caps, (unsigned long)drops);
+    printf("  %-6s %-8s %7s %6s  %-11s %-11s %-11s %-11s\n", "cycle", "next", "n", "no gap",
+           "/BE low", "BE_REQ off", "/BE high", "gap to next");
+#define NS(v) ((int)((v) * (int)ns_x10) / 10)
+    for (int c = 0; c < 3; c++)
+        for (int k = 0; k < 3; k++) {
+            be_stat_t *s = &st[c][k];
+            if (!s->n && !s->no_gap) continue;
+            printf("  %-6s %-8s %7lu %6lu", cyc[c], nxt[k], (unsigned long)s->n, (unsigned long)s->no_gap);
+            if (s->n)
+                printf("  %4d..%-5d %4d..%-5d %4d..%-5d %4d..%-5d", NS(s->lo_min), NS(s->lo_max),
+                       NS(s->rel_min), NS(s->rel_max), NS(s->rise_min), NS(s->rise_max),
+                       NS(s->gap_min), NS(s->gap_max));
+            putchar('\n');
+        }
+#undef NS
+}
+
 // ---- core 0: battery and console ----------------------------------------------
 
 static float battery_volts(void) {
@@ -608,6 +800,10 @@ static void help(void) {
            "  v   battery\n"
            "  c   capture a mapped write (and a read): /MREQ /RD /WR /BE ... timing\n"
            "  C   capture a mapped read, with the data lines (SD0-7) and A7-A0\n"
+           "  b   /BE release over many captures: rise after /MREQ, gap to the next cycle\n"
+           "  B   capture an opcode fetch from a mapped chunk and the 2 us after it\n"
+           "  A   the same for any opcode fetch (/BE with nothing mapped)\n"
+           "  a   which cycles find /BE low, by type and chunk\n"
            "  k   toggle the chunk 0-1 lock (the TS-Pico serves the ROM there)\n"
            "  u   reboot to BOOTSEL\n",
            VERSION, (unsigned long)(clock_get_hz(clk_sys) / 1000000));
@@ -630,6 +826,10 @@ int main(void) {
         case 'd': show_diag(); break;
         case 'c': la_capture(true); break;
         case 'C': la_capture(false); break;
+        case 'b': be_stats(); break;
+        case 'B': la_fetch(true); break;
+        case 'A': la_fetch(false); break;
+        case 'a': be_by_chunk(); break;
         case 'm': {
             // m<c><b>: OWN of chunk c = bank b (digits), from the console
             int c = getchar_timeout_us(2000000) - '0', b = getchar_timeout_us(2000000) - '0';

@@ -58,7 +58,10 @@ picotool load -f -x build/megabank.uf2
 `screen /dev/cu.usbmodem101`, then a key: `r` registers and counters, `l`
 the last 64 register writes, `d` diagnostics (the state machines, the DMA
 chain, the page table, which page pins moved in 50 ms), `v` battery, `k` the
-chunk 0-1 lock, `c` capture a mapped write, `C` a mapped read with the data lines, `mCB` OWN of chunk C = bank B, `u` reboot to BOOTSEL.
+chunk 0-1 lock, `c` capture a mapped write, `C` a mapped read with the data lines, `B` an
+opcode fetch from a mapped chunk and the 2 us after it, `A` the same for any
+fetch, `a` which cycles find /BE low (by type and chunk), `b` /BE's release
+after owned cycles, `mCB` OWN of chunk C = bank B, `u` reboot to BOOTSEL.
 
 ## From BASIC
 
@@ -135,6 +138,13 @@ slot 2, SW2 closed):
   `pull` from then on. Nothing drove the chunk's reads. Core 1 now sends
   `done` when it finds `io` waiting there with both FIFOs empty (`r`:
   "unstuck"); after that, power cycles of the 2068 leave the board working.
+- **/BE readback (2026-11-19):** the bus's /BE as the board reads it back
+  (nBE_L) no longer follows anything: with nothing mapped, `a` found it low
+  on 50-73% of the 2068's own cycles, and `A` and `B` show it flipping on
+  /M1's edges and staying high through a read the board owned. The board's
+  /BE itself works (`mbexrom.tap` still gives 111, 222, 77), so board 1's
+  readback input, U4 pin 18 from edge finger A29, is open. The "slow rise"
+  in the captures above is that, not the bus.
 - First run, before a fix: the DMA chain never ran (an endless transfer
   count of 0; the RP2350 needs a non-zero count with the endless mode), so
   the SRAM was never selected and mapped reads returned whatever the data
