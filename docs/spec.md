@@ -1291,7 +1291,7 @@ affected.
 `firmware/tests/video_regression.c`): a bank 1–253 in `OWN2`/`OWN3` stops the
 copy, 0/FEh/FFh and the other registers don't, a Spectrum 128 AY write
 (FFFDh/BFFDh) lands on FDh as on the board, and the DF2 mirror and F4h tests
-still apply. `SOFTWARE_VER` stays 43h for now. Not yet built as a UF2 or run
+still apply. Firmware 4.4: `SOFTWARE_VER` (register 7Fh) reads 44h. Not yet built as a UF2 or run
 on hardware. The missing `break` after `case 0xF4:` noted here before was
 already fixed upstream.
 
