@@ -145,6 +145,9 @@ slot 2, SW2 closed):
   /BE itself works (`mbexrom.tap` still gives 111, 222, 77), so board 1's
   readback input, U4 pin 18 from edge finger A29, is open. The "slow rise"
   in the captures above is that, not the bus.
+- **The boards swapped** (this board in slot 1, the v3 card in slot 2, SW2
+  closed): the readback is the same, so its fault is on the board. DOCK,
+  EXROM and chunks 0-1 all pass.
 - First run, before a fix: the DMA chain never ran (an endless transfer
   count of 0; the RP2350 needs a non-zero count with the endless mode), so
   the SRAM was never selected and mapped reads returned whatever the data

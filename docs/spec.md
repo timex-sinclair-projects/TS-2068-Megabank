@@ -1437,8 +1437,14 @@ reference for what it changes.
    gives 111, 222, 77. So board 1's readback path, edge finger A29 to U4
    pin 18, is open (a joint or the trace), and on 2026-11-18 it worked, so
    it may be intermittent. The /BE rise between cycles has not yet been
-   measured with a working readback or a scope. Still open: that; other
-   2068s and SCLD revisions; every slot, and PicoVideo fitted.
+   measured with a working readback or a scope.
+   **The boards swapped (2026-11-19):** this board in slot 1, the v3 card in
+   slot 2 behind SW2. The readback misbehaves the same way (`a` gave almost
+   the same counts), so its fault is on the board, not the extender's /BE
+   chain. DOCK (`mbdock`), EXROM (`mbexrom`) and chunks 0-1 (`mbrom`) all
+   pass, so the v3 card's /BE still reaches the 2068 from slot 2, and the
+   card still yields the board's chunks. Still open: the rise between
+   cycles; other 2068s and SCLD revisions; slot 3, and PicoVideo fitted.
 3. **How the ROM tells the TS-Pico about the board at boot**: a new command,
    or a field in an existing boot exchange. Decided when the ROM work starts,
    with `docs/PROTOCOL.md`.
