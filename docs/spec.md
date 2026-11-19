@@ -787,7 +787,13 @@ API loops over, one register set per bank, is just 16 bytes on this board
 3. **Only then** set `MAXBNK` and 6315h to the bank count.
 4. **Narrow the TS-Pico's own crossings** from "all chunks to HOME" (`FF00`)
    to chunks 0–1 (`FFFC`, the mask is active-low), so a program's pages in
-   chunks 2–7 survive ROM calls. Check each: HOME 3CE3h and 0A50h, HOME 03FCh
+   chunks 2–7 survive ROM calls. **Measured (2026-11-19, ZEsarUX, ROM 2.4 and
+   the 2.5 test ROM):** after any `tpi:` command the HSR reads 0, whatever
+   it was. OWNn and SUBn are untouched, so on the board a program's mapped
+   page still reads as the board's, but with its HSR bit gone its writes
+   also reach HOME RAM. Until this item is done, a program that maps pages
+   must set its HSR bits again after every `tpi:` command (and every `r:`
+   SAVE/LOAD). Check each: HOME 3CE3h and 0A50h, HOME 03FCh
    (through 040Dh), EXROM 03DDh, 08DDh, the error path at 0017h–002Dh, and the
    interrupt handler at 62AEh.
 5. **Fix the 64-column relocation table.** Four of its 61 entries are wrong
