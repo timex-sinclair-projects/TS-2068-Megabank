@@ -1286,9 +1286,14 @@ built need only a new UF2. **Without the update,** a PicoVideo shows stray
 writes whenever a program maps a bank into chunk 2 or 3; nothing else is
 affected.
 
-While there: `case 0xF4:` has no `break` and falls into `case HIRES_ADRL`,
-so every `OUT F4h` also overwrites the low byte of the hi-res address. One
-line to fix.
+**Built (2026-11-19)** in PicoVideo's `firmware/coreB/busMain.c` as above
+(`mbReg`, `mbOwn2`, `mbOwn3`; PicoVideo PR #11), with a host test (`test_megabank` in
+`firmware/tests/video_regression.c`): a bank 1–253 in `OWN2`/`OWN3` stops the
+copy, 0/FEh/FFh and the other registers don't, a Spectrum 128 AY write
+(FFFDh/BFFDh) lands on FDh as on the board, and the DF2 mirror and F4h tests
+still apply. Firmware 4.4: `SOFTWARE_VER` (register 7Fh) reads 44h. Not yet built as a UF2 or run
+on hardware. The missing `break` after `case 0xF4:` noted here before was
+already fixed upstream.
 
 **Exploration:** PicoVideo folded into this card as a second RP2350B, with
 DVI/HDMI out of its HSTX, the AY in the HDMI audio, and a private path to
@@ -1493,7 +1498,8 @@ reference for what it changes.
    `rd_cmds_hosttest.py`) and run end to end in ZEsarUX's Megabank model
    (`tools/emu/megabank_smoke.py`, 39/39). Not yet on
    hardware. `tpi:ram alloc` is still to shape (open question 8).
-6. **PicoVideo** update (its own repo).
+6. **PicoVideo** update (its own repo). **Built (2026-11-19)** and
+   host-tested ([PicoVideo](#picovideo)); not yet on hardware.
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
    JLCPCB), prototype, hardware tests. **Routed (2026-10-18; re-routed 2026-10-19 with /INT and /NMI):** schematic
    generated (ERC: one expected warning), v3's form factor, routed by v3's
