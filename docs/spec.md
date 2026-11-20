@@ -1579,9 +1579,9 @@ hardware: neither this board nor the v3 card can run bus cycles.
    in a loop, each round replacing the last, and the 2068 switched off
    mid-loop with the controller's USB unplugged, so the board lost its
    supply too and ran from the battery; the TS-Pico soft-reset before
-   power came back. Then 0 FAIL: `keep` verified, `long` verified or was
-   gone (F, allowed) but not corrupt, and a new SAVE and two ERASEs
-   worked.
+   power came back. Then 0 FAIL: `keep` verified, `long` verified (a
+   whole copy survived the SAVE that was cut), and a new SAVE and two
+   ERASEs worked.
 5. The RAM disk end to end: every SAVE/LOAD form, MOVE both ways, backup and
    restore, a full disk, compaction.
 6. `tools/hwcheck.py` grows a RAM-board section. **Written (2026-11-19):**
