@@ -1574,7 +1574,14 @@ hardware: neither this board nor the v3 card can run bus cycles.
 3. Battery: fill the board, power off for a day, verify; measure the standby
    current.
 4. Power-fail: switch off during a long `SAVE "r:"`. Other files must survive;
-   the one being written may be lost.
+   the one being written may be lost. **Passed (2026-11-20)**
+   (`firmware/controller/basic/mbcut.bas`): `SAVE "r:long" CODE 32768,32000`
+   in a loop, each round replacing the last, and the 2068 switched off
+   mid-loop with the controller's USB unplugged, so the board lost its
+   supply too and ran from the battery; the TS-Pico soft-reset before
+   power came back. Then 0 FAIL: `keep` verified, `long` verified or was
+   gone (F, allowed) but not corrupt, and a new SAVE and two ERASEs
+   worked.
 5. The RAM disk end to end: every SAVE/LOAD form, MOVE both ways, backup and
    restore, a full disk, compaction.
 6. `tools/hwcheck.py` grows a RAM-board section. **Written (2026-11-19):**
@@ -1715,8 +1722,8 @@ reference for what it changes.
    #428). **The memory test on the board (2026-11-20):** `mbmem`, all 64
    banks through chunks 4–7 (read back through 2 and 4–7), pattern and
    complement: **PASS**, with the v3 card fitted (no PicoVideo). Test 5
-   has run too (phase 5, above). Still to run: tests 3 and 4 (the
-   battery's standby current, a power cut during a long `SAVE`).
+   has run too (phase 5, above). Test 4, a power cut during a
+   `SAVE`, passed too (Testing). Still to run: test 3's standby current.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. **Built (2026-11-19), all of
    it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
