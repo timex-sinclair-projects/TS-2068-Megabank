@@ -1141,7 +1141,10 @@ open file's bytes, inside an extent the firmware gave it.
   TS-Pico, no SD card, nothing to wait for. (Estimates; measure in the
   emulator.) **Measured (2026-11-19): about 4.3 ms a character** on the
   board, 3.8 ms in ZEsarUX, with the entry included
-  ([Testing](#testing), Channels step 8).
+  ([Testing](#testing), Channels step 8). With the fast entry and the
+  record's own output stub ([Open questions](#open-questions) 21): 396
+  T-states in ZEsarUX, and **at most about 70 µs on average on the board
+  (2026-11-20)**.
 - **No buffers.** Each `PRINT #` byte is on the board when `RST 10h`
   returns, and `INPUT #` reads one byte at a time with no read-ahead. So the
   record is small (256 bytes, mostly pad, against `f:`'s 512), a `u` stream
@@ -1595,8 +1598,34 @@ and `mbchpg.bas` (the same programs pass in ZEsarUX). **All 40 passed**
   RAM copy at 65D0h, and `GUARDED`'s trap setup and teardown. The window
   is mapped and unmapped (`MV_WIN`, `MV_MAP`, `MV_UNMAP`) for every byte,
   and every CR writes the length and position back through four more.
-  [Open questions](#open-questions) 21 has the way out, now built in
-  ZEsarUX: about 0.23 ms a character there, not yet timed on the board.
+  [Open questions](#open-questions) 21 has the way out, now built and run
+  on the board (below).
+
+**Run on hardware again (2026-11-20)**, with the fast entry
+([Open questions](#open-questions) 21): the same card, firmware and
+programs, with `TSPICO-MB.ROM` from tspico-firmware-build `main` at
+`b3e6fb8` (sha1 `c56ae6c3…`) in flash slot 1. That ROM has the
+write-protect fix (timex-sinclair-projects/tspico-firmware-build#432), the
+fast entry (#433), its late-switch fix (#434) and the record's output
+stub (#436). **All 40 passed, 2 for information**, with no firmware errors
+in the telemetry:
+
+- Steps 1, 2, 3, 4 and 7: all 32 automatic tests pass, as before.
+- Step 5: NEW, a reset and a power-off each keep the file to its last CR
+  (5 bytes), and `ERASE` works after each. NEW passed first time.
+- Step 6: J with the switch on, 0 OK for `CLOSE #4` with it off, and `wp`
+  is now **4 bytes**, `one` and its CR: after J the stream's length goes
+  back to the slot's last written-back value (#432).
+- Step 8: 2000 characters through `PRINT #` took 2.71 s, the same loop
+  without them 2.57 s. **That puts the average at no more than about
+  70 µs a character, against 4.3 ms**. The figure is a difference between
+  two nearly equal times, and the second loop does a `LET` where the first
+  prints, so it is a bound, not a measurement: 100 CRs at ZEsarUX's 4 904
+  T-states each would account for most of the 0.14 s on their own. A
+  finer timing needs a longer run or the board's own cycle count.
+- Typing in the editor: no dropped keys. #433 alone, the first ROM tried
+  that day, dropped random keys with the error rasp; that was the
+  late-switch defect #434 fixes ([Open questions](#open-questions) 21).
 
 ## Phases
 
@@ -1657,6 +1686,9 @@ reference for what it changes.
    **On hardware (2026-11-19):** every Channels testing step on a v3 card
    with ROM 2.5 and firmware `40cd82d`, all 40 passed (NEW on a repeat),
    with a character costing about 4.3 ms ([Testing](#testing), Channels).
+   **Again (2026-11-20)** with the fast entry of open question 21: all 40
+   passed (NEW first time), `wp` is 4 bytes after J, and a character costs
+   at most about 70 µs on average.
 
 ## Open questions
 
@@ -1868,11 +1900,11 @@ reference for what it changes.
     board-owned chunk's writes out of HOME RAM whatever F4h says. The TS-Pico
     must also serve the EXROM outside chunks 0–1. Raised by David
     (2026-11-19); the bank API already lets the EXROM go in any chunk.
-21. **A fast entry for channel I/O.** **Built (2026-11-19), in ZEsarUX;
-    not yet run on the board** (tspico-firmware-build, branch
-    `claude/fast-channel-entry`,
-    timex-sinclair-projects/tspico-firmware-build#433). A character through `r:` cost about
-    4.3 ms on the board ([Testing](#testing), Channels step 8), most of it
+21. **A fast entry for channel I/O.** **Built (2026-11-19) and run on the
+    board (2026-11-20): all 40 Channels checks pass**
+    (timex-sinclair-projects/tspico-firmware-build#433, with #434 and #436
+    after it; [Testing](#testing), "Run on hardware again"). A character
+    through `r:` cost about 4.3 ms on the board ([Testing](#testing), Channels step 8), most of it
     the stock Timex bank call that every `f:` and `r:` character paid going
     into the module and coming back. That mechanism was broken as designed
     and nothing used it, so the ROM was free to replace it. T-states per
@@ -1895,7 +1927,8 @@ reference for what it changes.
       is now Report O). Under `DI` it sets FFh bit 7 and F4h bits 0–1 with
       direct `OUT`s, at matched addresses so the switch needs no RAM code:
       the `OUT` at HOME 002Eh is followed by the EXROM's `JP` at 0030h, and
-      the `OUT` at EXROM 1399h by HOME's `RET` at 139Bh. No bank-call frame.
+      the `OUT` at EXROM 1399h by HOME's `RET` at 139Bh (on the board that
+      raced the card; #434 replaced both, below). No bank-call frame.
       An error raised in the EXROM goes through its RST 8, which pages HOME
       without a frame, so it needs no trap at all; the exchanges with the
       TS-Pico that can reach HOME code (`f:`'s buffer, `r:`'s growth) set
@@ -1914,7 +1947,8 @@ reference for what it changes.
       of bytes that can go straight in, set up after each byte the full
       path handles. Bytes of 32 or more go through it with no position
       arithmetic until the next 256-byte boundary, the extent's end or the
-      page's end.
+      page's end. (#436 replaced the cursor's output side with the
+      record's buffer, below.)
     - **The write-backs stay where they were**, at every CR and every 256
       bytes, because they are cheap now (a CR with its write-back is 4 904
       T-states). The cursor never crosses those points, so NEW, a reset and
@@ -1922,11 +1956,43 @@ reference for what it changes.
       guarantee needs no change. ZEsarUX's run of step 5's NEW case keeps
       the file to its last CR.
 
-    Still open: the time on the board (`tools/hwcheck.py
-    --megabank-channels`, step 8), and input, which takes the fast entry
-    but not a cursor (`INPUT #` was not timed). `f:` gets the fast entry
-    only: its 64-byte buffer and `tpi:chwr` exchange are as they were.
-    Raised by David (2026-11-19).
+    - **The switch must not race the card** (#434). On the board, #433 alone
+      dropped random keys in the editor with the error rasp: the key click
+      goes through `FASTH` too. The `OUT` at HOME 002Eh needed the very next
+      fetch to come from the EXROM, but the v3 card follows an F4h write
+      from a polled loop on core 1 and can serve one more read from the
+      old ROM. HOME's 0030h is BC-SPACES, and the return at EXROM 1399h had
+      the same shape. ZEsarUX switches at once, so it passed there. The
+      switches are now loops at 128Bh (in) and 128Fh (out), `OUT (F4h),A` /
+      `JR`, the same bytes in both ROMs but for the `JR`'s displacement,
+      which repeat the `OUT` until a read comes from the other ROM. Chunk 1
+      is checked through 2C8Ch (HOME's `JP (HL)` spins, the EXROM's
+      `JP FX_ENTRY` goes on). About 13 T-states a character; the host tests
+      model the card lagging by any number of reads. Found by a review of
+      #433 after the board run; the rule for any later bank switch from ROM:
+      **never rely on the fetch right after the `OUT`.**
+    - **The record's own output stub** (#436). An `R` record's output
+      routine is a 28-byte stub in the channel record, copied there by
+      `OPEN #`. A byte of 32 or more goes into a 57-byte buffer in the
+      record with interrupts on and no bank switch at all; a CR, a control
+      or a full buffer goes through `FASTH` as before, and one map of chunk
+      0 and one `LDIR` write the buffer to the board. `r:` text: **396
+      T-states** in ZEsarUX, against 829 with #434. The buffer is written at
+      every CR and never crosses a 256-byte boundary, so the write-backs,
+      and what NEW, a reset and power-off keep, are unchanged; Channels step
+      5 confirms it on the board. Because `R_OUT` now depends on where the
+      record is, closing an earlier `F` or `R` record (which moves the later
+      ones) points each `R` record back at its own stub.
+
+    **On the board (2026-11-20):** all 40 Channels checks pass, no keys
+    drop, and 2000 characters cost no more than about 70 µs each on
+    average, against 4.3 ms ([Testing](#testing), "Run on hardware
+    again"; that figure is a coarse bound, not a measurement).
+
+    Still open: a finer timing on the board, and input, which takes the
+    fast entry but not a cursor or a buffer (`INPUT #` was not timed). `f:`
+    gets the fast entry only: its 64-byte buffer and `tpi:chwr` exchange
+    are as they were. Raised by David (2026-11-19).
 
 ## Sources
 
