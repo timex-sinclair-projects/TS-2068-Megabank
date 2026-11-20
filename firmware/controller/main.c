@@ -8,11 +8,13 @@
  * a register changes or /RESET goes low. Core 0 runs a USB console for the
  * bench: registers, counters, a log of register writes.
  *
- * Bring-up safety: chunks 0 and 1 are locked by default. The TS-Pico serves
- * HOME and EXROM there with its own /BE, and until its firmware follows the
- * owner table (spec, "Firmware", core 1) both cards would drive the bus. With
- * the lock on, OWN0/OWN1 read back what was written but the board never
- * answers there. `k` on the console turns the lock off.
+ * The chunk 0-1 lock: the TS-Pico serves HOME and EXROM in chunks 0 and 1
+ * with its own /BE, and a card whose firmware doesn't follow the owner table
+ * (spec, "Firmware", core 1; TS-Pico main before d5be583) would drive the bus
+ * with this board. With the lock on, OWN0/OWN1 read back what was written
+ * but the board never answers there. It is off at start-up (VERSION 4 on):
+ * the TS-Pico's Megabank ROM does its board I/O through chunk 0. `k` on the
+ * console turns it on, until the next restart, for a card on old firmware.
  *
  * Settings: BASE and SIZE live in the last sector of the controller's flash
  * (spec, "The controller"; open question 11), set from the console with `S`.
@@ -61,7 +63,7 @@
 #define PAGE_PINS    11   // GP28-GP38
 #define PAGE_IDLE    0x7ffu
 
-#define VERSION      3
+#define VERSION      4
 #define SYS_KHZ      250000
 
 // ---- state -------------------------------------------------------------------
@@ -70,7 +72,7 @@ static uint8_t own[8], sub[8], wprot, sel;
 static volatile uint8_t base = 1, size = 64;
 static bool settings_from_flash;   // false: the defaults
 static volatile bool battery_low;
-static volatile bool rom_lock = true;
+static volatile bool rom_lock = false;   // `k`: the chunk 0-1 lock, off at start-up
 static bool wp_on;
 
 static uint32_t page_table[8] __attribute__((aligned(32)));
@@ -987,7 +989,7 @@ static void help(void) {
            "  a   which cycles find /BE low, by type and chunk\n"
            "  p   with the 2068 in reset: BE_REQ by hand, /BE read back\n"
            "  P   with the 2068 in reset: the same under the capture (LA self-test)\n"
-           "  k   toggle the chunk 0-1 lock (the TS-Pico serves the ROM there)\n"
+           "  k   toggle the chunk 0-1 lock (off at start-up; on: the board never answers there)\n"
            "  u   reboot to BOOTSEL\n",
            VERSION, (unsigned long)(clock_get_hz(clk_sys) / 1000000));
 }
