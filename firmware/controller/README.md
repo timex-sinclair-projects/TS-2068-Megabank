@@ -128,6 +128,16 @@ line counts the failures; all 11 checks pass on the board (2026-11-20).
 zmakebas -a 10 -n MBPH4 -o build/MBPH4.TAP basic/mbph4.bas
 ```
 
+## The Timex bank API (phase 8)
+
+`banktest/` checks ROM 2.5's bank API with the board on hardware:
+`BANK_ENABLE` without writes reaching the 2068's own RAM, a mapped page kept
+through interrupts and a `tpi:` command, `GET_STATUS`, `GET_NUMBER`,
+`PUT_WORD`/`GET_WORD`, `XFER_BYTES` (direct and buffered) and
+`SAVE_STATUS`/`RESTORE_STATUS`. `python3 firmware/controller/banktest/build.py`
+makes `mbbank.tap` (sjasmplus and zmakebas); `LOAD "tpi:mbbank.tap"`, then
+`LOAD ""`. All 18 checks pass on the board (2026-11-20) and in ZEsarUX.
+
 ## Memory test
 
 `memtest/` is the spec's hardware test 2, run from the 2068: every page of

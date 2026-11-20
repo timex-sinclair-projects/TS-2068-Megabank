@@ -796,8 +796,17 @@ API loops over, one register set per bank, is just 16 bytes on this board
 ([tspico-firmware-build#429](https://github.com/timex-sinclair-projects/tspico-firmware-build/pull/429)).
 Tested in a Z80 model of the board with the HSR rule
 (`rom_bankapi_hosttest.py`, from RAM 6200h and from the 64-column copy) and
-in ZEsarUX (`BANK_ENABLE` there and back); not yet on hardware. Where it
-differs from the plan below:
+in ZEsarUX (`BANK_ENABLE` there and back). **On hardware (2026-11-20):**
+`firmware/controller/banktest/` (`mbbank.tap`), 18 of 18 on the board with
+ROM 2.5 from tspico-firmware-build `main` (`b3e6fb8`): the count and `BASE`
+set at boot; `BANK_ENABLE` of a board bank into chunk 4 and back to HOME,
+with the 2068's own RAM there (zeroed first) still all zero after; the page
+and its HSR bit kept through a second of interrupts and a `tpi:` command;
+`GET_STATUS`, `GET_NUMBER`, `PUT_WORD`/`GET_WORD`; `XFER_BYTES` of 384
+bytes directly and through its buffer, correct on the board, A = 0 and a
+bank mapped in chunk 6 kept; `SAVE_STATUS`/`RESTORE_STATUS`. Not tested
+there: `GOTO_BANK`, `CALL_BANK`, the DOCK and the EXROM, and 64 columns.
+Where it differs from the plan below:
 
 - **No nibble translators.** There is no Timex bank hardware or software to
   stay compatible with, so `WRITE_BS_REG` and `READ_BS_REG` are gone, not
@@ -1706,8 +1715,8 @@ reference for what it changes.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. **Built (2026-11-19), all of
    it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
-   tspico-firmware-build#429): in the Z80 model and ZEsarUX; not yet on
-   hardware.
+   tspico-firmware-build#429): in the Z80 model and ZEsarUX. **On hardware (2026-11-20):** `mbbank`,
+   18 of 18.
 9. **ROM and firmware: `r:` channels** ([Channels](#channels-phase-9)).
    Depends on 4 and 5 only, not on 8, so it can go before it. **Built
    (2026-11-19)** ([Channels as built](#channels-as-built)): the Z80 model
