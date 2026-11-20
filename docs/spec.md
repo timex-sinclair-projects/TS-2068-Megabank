@@ -1595,7 +1595,8 @@ and `mbchpg.bas` (the same programs pass in ZEsarUX). **All 40 passed**
   RAM copy at 65D0h, and `GUARDED`'s trap setup and teardown. The window
   is mapped and unmapped (`MV_WIN`, `MV_MAP`, `MV_UNMAP`) for every byte,
   and every CR writes the length and position back through four more.
-  [Open questions](#open-questions) 21 has the way out.
+  [Open questions](#open-questions) 21 has the way out, now built in
+  ZEsarUX: about 0.23 ms a character there, not yet timed on the board.
 
 ## Phases
 
@@ -1867,20 +1868,65 @@ reference for what it changes.
     board-owned chunk's writes out of HOME RAM whatever F4h says. The TS-Pico
     must also serve the EXROM outside chunks 0–1. Raised by David
     (2026-11-19); the bank API already lets the EXROM go in any chunk.
-21. **A fast entry for channel I/O.** A character through `r:` costs about
-    4.3 ms on the board ([Testing](#testing), Channels step 8). Most of it
-    is the stock Timex bank call, which every `f:` and `r:` character pays
-    going into the module and coming back. That mechanism was broken as
-    designed and nothing used it, so the ROM is free to replace it. Proposed:
-    - a HOME stub that does `DI`, switches the EXROM in with one or two
-      `OUT`s, calls the module, switches back and does `EI`, with no
-      bank-call frame and an error trap set once per statement;
-    - a window that stays mapped for a stream's current 8K page, remapped
-      only when the position leaves the page or the window chunk is wanted;
-    - the length and position written back at CLOSE, at a grow and when a
-      page fills, not at every CR (this changes what NEW and a reset keep).
-    Target: a few hundred T-states a character. Raised by David
-    (2026-11-19).
+21. **A fast entry for channel I/O.** **Built (2026-11-19), in ZEsarUX;
+    not yet run on the board** (tspico-firmware-build, branch
+    `claude/fast-channel-entry`,
+    timex-sinclair-projects/tspico-firmware-build#433). A character through `r:` cost about
+    4.3 ms on the board ([Testing](#testing), Channels step 8), most of it
+    the stock Timex bank call that every `f:` and `r:` character paid going
+    into the module and coming back. That mechanism was broken as designed
+    and nothing used it, so the ROM was free to replace it. T-states per
+    `RST 10h`, measured in ZEsarUX's Megabank model with ZRCP's T-state
+    counter (`tools/emu/chan_speed.py`, the loop's own cost taken off):
+
+    | Case | Before | After |
+    |---|---|---|
+    | `r:` text, a stream file | 13 338 | 817 |
+    | `r:` CR (with its write-back) | 22 375 | 4 904 |
+    | `f:` text (64-byte buffer, `tpi:chwr`) | 19 154 | 10 608 |
+
+    So an `r:` character went from about 3.8 ms to 0.23 ms in the
+    emulator. The 817 T-states are the whole of `RST 10h`, HOME's own
+    output path included, against a target of a few hundred for the
+    channel. What was built, against what was proposed:
+    - **The entry**, as proposed. HOME's `F` and `R` record stubs (14A0h,
+      14A9h) and the BEEPER thunk go to `FASTH` at 1265h, in the bytes of
+      CHAN-OPEN's banked-channel branch (no such channel exists; that branch
+      is now Report O). Under `DI` it sets FFh bit 7 and F4h bits 0–1 with
+      direct `OUT`s, at matched addresses so the switch needs no RAM code:
+      the `OUT` at HOME 002Eh is followed by the EXROM's `JP` at 0030h, and
+      the `OUT` at EXROM 1399h by HOME's `RET` at 139Bh. No bank-call frame.
+      An error raised in the EXROM goes through its RST 8, which pages HOME
+      without a frame, so it needs no trap at all; the exchanges with the
+      TS-Pico that can reach HOME code (`f:`'s buffer, `r:`'s growth) set
+      one, once an exchange rather than once a statement. The 32-errors test
+      (Channels step 3) passes in ZEsarUX, as do the rest of `mbchan.bas`
+      (38 checks, `tools/emu/mbchan_emu.py`). The old path stays for a call
+      made with chunk 0 or 1 not HOME's.
+    - **The window: chunk 0, not a window that stays mapped.** A window
+      left mapped while BASIC runs would hide a chunk of 4–7, all of which
+      the 2068 uses (the program, the stack, a program's own pages). So
+      each byte is still mapped and unmapped, but now in chunk 0, the
+      EXROM's first half, which the `r:` code (all in chunk 1) never needs
+      while it runs: four `OUT`s to map, two to unmap, nothing to save or
+      check. In place of the remembered window there is a cursor in the
+      channel record: the board bank, the 8K page, the address and a count
+      of bytes that can go straight in, set up after each byte the full
+      path handles. Bytes of 32 or more go through it with no position
+      arithmetic until the next 256-byte boundary, the extent's end or the
+      page's end.
+    - **The write-backs stay where they were**, at every CR and every 256
+      bytes, because they are cheap now (a CR with its write-back is 4 904
+      T-states). The cursor never crosses those points, so NEW, a reset and
+      power-off keep exactly what Channels step 5 says they keep, and that
+      guarantee needs no change. ZEsarUX's run of step 5's NEW case keeps
+      the file to its last CR.
+
+    Still open: the time on the board (`tools/hwcheck.py
+    --megabank-channels`, step 8), and input, which takes the fast entry
+    but not a cursor (`INPUT #` was not timed). `f:` gets the fast entry
+    only: its 64-byte buffer and `tpi:chwr` exchange are as they were.
+    Raised by David (2026-11-19).
 
 ## Sources
 
