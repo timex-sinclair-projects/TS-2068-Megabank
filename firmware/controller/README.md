@@ -34,11 +34,15 @@ an owned chunk, and core 0 stops the ring 8 us later and prints that cycle
 it shows the data lines on the SRAM's side of U3 (SD0-SD7) and A7-A0, but
 not WINH or the bus's /BE.
 
-**Chunks 0 and 1 are locked** by default: the TS-Pico serves HOME and EXROM
-there with its own /BE. With firmware that yields chunks the board owns
-(TS-Pico main `d5be583`) they map cleanly (Results); the lock stays for
-cards on older firmware. OWN0/OWN1 read back what was written; the board
-never answers there. `k` toggles the lock.
+**Chunks 0 and 1 are unlocked** at start-up (`VERSION` 4 on; before, they
+were locked until `k`). The TS-Pico serves HOME and EXROM there with its own
+/BE; its firmware has to yield chunks the board owns (TS-Pico main
+`d5be583`), and then they map cleanly (Results). The TS-Pico's Megabank ROM
+does its board I/O through chunk 0 (`OWN0`/`SUB0`), so with the lock on every
+read-back from the RAM disk's channels fails (`hwcheck.py
+--megabank-channels`: 14 passed, 20 failed; 40 and 0 with it off). `k` turns
+the lock on, until the next restart, for a card on older firmware: OWN0/OWN1
+then read back what was written and the board never answers there.
 
 **Settings.** `BASE` and `SIZE` (spec, "Bank numbers"; open question 11)
 live in the last 4K sector of the controller's flash (offset `0xFFF000`),
@@ -53,7 +57,8 @@ RAM, before anything runs from flash.
 **Battery.** Measured at boot, every hour after, and on `v`; `STATUS` bit 1
 is set below 2.5 V (spec, "Battery monitor").
 
-`VERSION` (register 16h) is 3 from this version on.
+`VERSION` (register 16h) is 4: 3 added the settings in flash, the hourly
+battery check and the memory test; 4 starts with chunks 0-1 unlocked.
 
 ## Build and flash
 
