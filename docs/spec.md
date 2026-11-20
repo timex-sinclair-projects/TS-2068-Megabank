@@ -1672,8 +1672,15 @@ reference for what it changes.
    emulator: tspico-firmware-build, `src/TS/ramdisk.py` and `tspico.py`'s
    `RD_*` (PR #427); host-tested (`src/test/ramdisk_hosttest.py`,
    `rd_cmds_hosttest.py`) and run end to end in ZEsarUX's Megabank model
-   (`tools/emu/megabank_smoke.py`, 39/39). Not yet on
-   hardware. `tpi:ram alloc` is still to shape (open question 8).
+   (`tools/emu/megabank_smoke.py`, 39/39). **On hardware (2026-11-20):**
+   `mbdisk` (hardware test 5), 27 of 28 on firmware `40cd82d`: every
+   SAVE/LOAD/VERIFY form, MOVE, ERASE, COPY both ways, a full disk, a 64K
+   disk and restore pass, with no firmware errors in the telemetry. Test 22,
+   `tpi:ram backup` into the current folder, wrote the whole image but
+   ended with J: the listing's refresh ran with the SD card unmounted.
+   Fixed in tspico-firmware-build#440, and with that fix on the card
+   (`/dev_tspico.mpy`) a backup gives 0 OK. `tpi:ram alloc` is still to
+   shape (open question 8).
 6. **PicoVideo** update (its own repo). **Built (2026-11-19)** and
    host-tested ([PicoVideo](#picovideo)); not yet on hardware.
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
@@ -1694,8 +1701,8 @@ reference for what it changes.
    bare statuses said IDLE, so a program's LOAD or VERIFY straight after a
    SAVE sometimes lost its first block command (report 29); they now say
    READY without IDLE, as the channel commands do (tspico-firmware-build
-   #428). Still to run on the boards: tests 2–5, and the standby current
-   (test 3).
+   #428). Still to run on the boards: tests 2–4, and the standby current
+   (test 3); test 5 has run (phase 5, above).
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. **Built (2026-11-19), all of
    it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
