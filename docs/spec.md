@@ -1569,6 +1569,8 @@ hardware: neither this board nor the v3 card can run bus cycles.
    (open question 2).
 2. A memory test from the 2068: every page, every chunk, pattern and
    address-in-address, with the v3 card and PicoVideo both plugged in.
+   **Passed (2026-11-20)** with the v3 card (`mbmem`; PicoVideo not yet
+   fitted).
 3. Battery: fill the board, power off for a day, verify; measure the standby
    current.
 4. Power-fail: switch off during a long `SAVE "r:"`. Other files must survive;
@@ -1710,8 +1712,11 @@ reference for what it changes.
    bare statuses said IDLE, so a program's LOAD or VERIFY straight after a
    SAVE sometimes lost its first block command (report 29); they now say
    READY without IDLE, as the channel commands do (tspico-firmware-build
-   #428). Still to run on the boards: tests 2–4, and the standby current
-   (test 3); test 5 has run (phase 5, above).
+   #428). **The memory test on the board (2026-11-20):** `mbmem`, all 64
+   banks through chunks 4–7 (read back through 2 and 4–7), pattern and
+   complement: **PASS**, with the v3 card fitted (no PicoVideo). Test 5
+   has run too (phase 5, above). Still to run: tests 3 and 4 (the
+   battery's standby current, a power cut during a long `SAVE`).
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. **Built (2026-11-19), all of
    it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
