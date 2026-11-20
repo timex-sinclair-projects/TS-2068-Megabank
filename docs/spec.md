@@ -762,7 +762,29 @@ Tested in a Z80 interpreter against a board model that enforces the HSR
 rule (`src/test/rom_megabank_hosttest.py`, in CI), and end to end in
 ZEsarUX's Megabank model with a stand-in RAM disk
 (`tools/emu/megabank_smoke.py`; ZEsarUX ignores the HSR, see
-[Testing](#testing)). Not yet run on hardware.
+[Testing](#testing)).
+
+**On hardware (2026-11-20):** the board in a 2068 with a v3 card, ROM 2.5
+from tspico-firmware-build `main` (`b3e6fb8`), and
+`firmware/controller/basic/mbph4.bas`, which checks what ZEsarUX can't.
+**All 11 checks pass:**
+
+- Detection: `PEEK 101` = 37, ID A5h/5Ah, `BASE` 1, `SIZE` 64, and
+  `SAVE "tpi:ram"` (op 7) describes the board.
+- After power-on, OWN0–7, `WPROT` and the HSR all read 0. The
+  controller's log (64 entries) held only the writes after the boot's own:
+  two passes setting OWN0–7 = 0 and SUB0–7 = 0–7. So it shows the end
+  state, not `MB_BOOT`'s writes themselves; the controller also clears its
+  registers on /RESET.
+- `SAVE`, `VERIFY` and `LOAD "r:…" CODE` of 2000 bytes at 57400 (chunk 7,
+  the stack in chunk 3, so the window is chunk 4): the bytes come back,
+  and **the 2068's own RAM at 8000h–9FFFh, zeroed first, is still all
+  zero**: the window's HSR bit keeps the mover's writes out of HOME RAM.
+  The HSR and OWN4 are 0 after each.
+- With the board's first bank mapped in chunk 4 and HSR bit 4 set (a
+  program's own page in the window chunk), `SAVE`, `LOAD` and `VERIFY`
+  each leave the HSR at 10h, OWN4 at `BASE`, SUB4 at 4 and the page's
+  bytes in place.
 
 ### The Timex bank API on the board (phase 8)
 
@@ -1642,8 +1664,10 @@ reference for what it changes.
    FDh/FCh).
 4. **ROM: detection, boot reset and the mover**, plus the `r:` hook.
    **Built (2026-11-19)** as test ROM 2.5 in tspico-firmware-build
-   ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)); hardware tests
-   to come.
+   ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)). **On hardware
+   (2026-11-20):** `mbph4.bas`, 11 of 11 (detection, the state after boot,
+   and the mover's window: no leak into HOME RAM, a program's page put
+   back).
 5. **Firmware: the RAM disk** and `tpi:ram`. **Built (2026-11-19)** in the
    emulator: tspico-firmware-build, `src/TS/ramdisk.py` and `tspico.py`'s
    `RD_*` (PR #427); host-tested (`src/test/ramdisk_hosttest.py`,
