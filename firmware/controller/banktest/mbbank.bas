@@ -1,0 +1,70 @@
+#! zmakebas -n mbbank -a 10
+# The Megabank phase 8 test on hardware: ROM 2.5's Timex bank API with the
+# board (the spec, "The Timex bank API on the board"). It loads mbbank.asm's
+# code to F000h and calls each routine from there (61440 + 3n), with its
+# parameters at 61952 (P) and its results at 61960 (R).
+#
+# What ZEsarUX's model can't show: that BANK_ENABLE keeps a board bank's
+# writes out of the 2068's own RAM (chunk 4's HOME RAM is zeroed first and
+# counted after), that a mapped page survives interrupts and a tpi: command
+# (the narrowed crossings), and that XFER_BYTES moves the right bytes on the
+# board. Banks BASE+1 to BASE+11 are used; the RAM disk, at the top of the
+# board, is left alone. Each check ends "ok" or "FAIL"; the last line names
+# the failed ones.
+   10 CLEAR 32767: LOAD ""CODE 61440
+   20 LET P=61952: LET R=61960: LET f=0: LET t=0: LET f$=""
+   30 CLS : PRINT "Megabank phase 8 test"
+   40 PRINT "ROM ";PEEK 101;: LET c=PEEK 101=37: GO SUB 8000
+   50 OUT 253,18: LET a=IN 252: OUT 253,19: LET c=a=165 AND IN 252=90: PRINT "board";: GO SUB 8000
+   60 OUT 253,20: LET b=IN 252: PRINT "BASE ";b;" count ";PEEK 25365;" MBBASE ";PEEK 25604;: LET c=PEEK 25365>11 AND PEEK 25604=b: GO SUB 8000
+# BANK_ENABLE: bank b+1 in chunk 4 (C = 239), over zeroed HOME RAM.
+  100 RANDOMIZE USR 61464
+  110 POKE P,b+1: POKE P+1,239: RANDOMIZE USR 61440
+  120 POKE 32768,171: POKE 40959,205
+  130 PRINT "map 4";: GO SUB 7000: LET c=c AND h=16 AND o=b+1 AND PEEK 32768=171: GO SUB 8000
+  140 PAUSE 50: PRINT "after 1 s";: GO SUB 7000: LET c=c AND h=16 AND o=b+1 AND PEEK 32768=171 AND PEEK 40959=205: GO SUB 8000
+  150 SAVE "tpi:ram"
+  160 PRINT "after tpi:";: GO SUB 7000: LET c=c AND h=16 AND o=b+1 AND PEEK 32768=171: GO SUB 8000
+  170 POKE P,b+1: RANDOMIZE USR 61443: PRINT "GET_STATUS ";PEEK R;" ";PEEK (R+1);: LET c=PEEK R=239 AND PEEK (R+1)=b+1: GO SUB 8000
+  180 POKE P+2,0: POKE P+3,128: RANDOMIZE USR 61446: LET a=PEEK R: POKE P+3,64: RANDOMIZE USR 61446
+  190 PRINT "GET_NUMBER ";a;" ";PEEK R;: LET c=a=b+1 AND PEEK R=255: GO SUB 8000
+  200 POKE P,255: POKE P+1,239: RANDOMIZE USR 61440
+  210 LET n=USR 61467: PRINT "HOME 4: ";PEEK 32768;", leak ";n;: GO SUB 7000: LET c=c AND h=0 AND o=0 AND PEEK 32768=0 AND n=0: GO SUB 8000
+  220 POKE P,b+1: POKE P+1,239: RANDOMIZE USR 61440: LET a=PEEK 32768: POKE P,255: RANDOMIZE USR 61440
+  230 PRINT "bank kept ";a;: LET c=a=171: GO SUB 8000
+# PUT_WORD and GET_WORD: BEEFh (48879) at 8010h in bank b+11.
+  300 POKE P,b+11: POKE P+2,16: POKE P+3,128: POKE P+4,239: POKE P+5,190: RANDOMIZE USR 61449
+  310 POKE R+2,0: POKE R+3,0: RANDOMIZE USR 61452: LET a=PEEK (R+2)+256*PEEK (R+3)
+  320 LET n=USR 61467: PRINT "PUT/GET_WORD ";a;: GO SUB 7000: LET c=c AND h=0 AND o=0 AND a=48879 AND n=0: GO SUB 8000
+# XFER_BYTES: 384 bytes of the ROM in bank b+5 at 8000h; bank b+2 in chunk
+# 6 (C = 191) must stay put.
+  400 POKE P,b+5: POKE P+1,239: RANDOMIZE USR 61440
+  410 POKE P+2,0: POKE P+3,128: POKE P+6,128: POKE P+7,1: RANDOMIZE USR 61470
+  420 POKE P,255: RANDOMIZE USR 61440
+  430 POKE P,b+2: POKE P+1,191: RANDOMIZE USR 61440
+  440 POKE P,b+5: POKE P+1,b+7: POKE P+2,0: POKE P+3,128: POKE P+4,0: POKE P+5,161: POKE P+6,128: POKE P+7,1: RANDOMIZE USR 61455
+  450 LET a=PEEK R: OUT 253,6: LET o=IN 252: PRINT "XFER direct A ";a;" HSR ";IN 244;" OWN6 ";o;: LET c=a=0 AND IN 244=64 AND o=b+2: GO SUB 8000
+  460 POKE P,b+7: POKE P+1,223: RANDOMIZE USR 61440: POKE P+2,0: POKE P+3,161: LET n=USR 61473: POKE P,255: RANDOMIZE USR 61440
+  470 PRINT "bytes, bank ";b+7;" A100h: ";n;" wrong";: LET c=n=0: GO SUB 8000
+  480 POKE P,b+5: POKE P+1,b+9: POKE P+2,0: POKE P+3,128: POKE P+4,0: POKE P+5,129: POKE P+6,128: POKE P+7,1: RANDOMIZE USR 61455
+  490 LET a=PEEK R: PRINT "XFER buffered A ";a;" HSR ";IN 244;: LET c=a=0 AND IN 244=64: GO SUB 8000
+  500 POKE P,b+9: POKE P+1,239: RANDOMIZE USR 61440: POKE P+2,0: POKE P+3,129: LET n=USR 61473: POKE P,255: RANDOMIZE USR 61440
+  510 PRINT "bytes, bank ";b+9;" 8100h: ";n;" wrong";: LET c=n=0: GO SUB 8000
+  520 POKE P,255: POKE P+1,191: RANDOMIZE USR 61440
+  530 LET n=USR 61467: PRINT "HOME 4 after XFER: leak ";n;: LET c=n=0 AND IN 244=0: GO SUB 8000
+# SAVE_STATUS / RESTORE_STATUS: bank b+3 in chunks 4-5 (C = 207).
+  600 POKE P,b+3: POKE P+1,207: RANDOMIZE USR 61440: RANDOMIZE USR 61458: LET a=PEEK (R+2)+256*PEEK (R+3)
+  610 POKE P,255: RANDOMIZE USR 61440: POKE P,b+4: POKE P+1,191: RANDOMIZE USR 61440
+  620 RANDOMIZE USR 61461: LET d=PEEK (R+2)+256*PEEK (R+3)
+  630 OUT 253,4: LET o=IN 252: OUT 253,5: LET u=IN 252: OUT 253,6: LET v=IN 252
+  640 PRINT "SAVE/RESTORE ";o;" ";u;" ";v;" HSR ";IN 244;: LET c=o=b+3 AND u=b+3 AND v=0 AND IN 244=48 AND a=61986 AND d=61986: GO SUB 8000
+  650 POKE P,255: POKE P+1,207: RANDOMIZE USR 61440
+  660 LET n=USR 61467: PRINT "all HOME: leak ";n;: GO SUB 7000: LET c=c AND h=0 AND o=0 AND n=0: GO SUB 8000
+  900 PRINT : PRINT "Done: ";t;" checks, ";f;" FAIL";f$
+  910 STOP
+# Chunks 0-3 and 5-7 HOME but where a test said; h = the HSR, o = OWN4.
+ 7000 LET h=IN 244: OUT 253,4: LET o=IN 252: LET c=1: FOR i=0 TO 3: OUT 253,i: IF IN 252<>0 THEN LET c=0
+ 7010 NEXT i: OUT 253,7: IF IN 252<>0 THEN LET c=0
+ 7020 RETURN
+ 8000 POKE 23692,255: LET t=t+1: IF c THEN PRINT " ok": RETURN
+ 8010 PRINT " FAIL": LET f=f+1: LET f$=f$+" "+STR$ t: RETURN

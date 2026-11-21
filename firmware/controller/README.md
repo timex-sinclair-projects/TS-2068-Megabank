@@ -116,6 +116,28 @@ That prints 111, 222, 222: the last is the leak. With the chunk in DOCK
 prints 111, 222, 77. It is `basic/mbdock.bas`; `zmakebas -a 10 -n MBDOCK -o
 build/MBDOCK.TAP basic/mbdock.bas` makes a TAP for the v3 card's SD card.
 
+## The ROM's mover (phase 4)
+
+`basic/mbph4.bas` checks ROM 2.5's side of the board on hardware: detection,
+the state after boot, and that a `SAVE`, `LOAD` or `VERIFY` to `r:` never
+writes the 2068's own RAM under the mover's window and puts back a program's
+page mapped there. Each SAVE asks to start the tape: press a key. Its last
+line counts the failures; all 11 checks pass on the board (2026-11-20).
+
+```bash
+zmakebas -a 10 -n MBPH4 -o build/MBPH4.TAP basic/mbph4.bas
+```
+
+## The Timex bank API (phase 8)
+
+`banktest/` checks ROM 2.5's bank API with the board on hardware:
+`BANK_ENABLE` without writes reaching the 2068's own RAM, a mapped page kept
+through interrupts and a `tpi:` command, `GET_STATUS`, `GET_NUMBER`,
+`PUT_WORD`/`GET_WORD`, `XFER_BYTES` (direct and buffered) and
+`SAVE_STATUS`/`RESTORE_STATUS`. `python3 firmware/controller/banktest/build.py`
+makes `mbbank.tap` (sjasmplus and zmakebas); `LOAD "tpi:mbbank.tap"`, then
+`LOAD ""`. All 18 checks pass on the board (2026-11-20) and in ZEsarUX.
+
 ## Memory test
 
 `memtest/` is the spec's hardware test 2, run from the 2068: every page of

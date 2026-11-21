@@ -762,7 +762,29 @@ Tested in a Z80 interpreter against a board model that enforces the HSR
 rule (`src/test/rom_megabank_hosttest.py`, in CI), and end to end in
 ZEsarUX's Megabank model with a stand-in RAM disk
 (`tools/emu/megabank_smoke.py`; ZEsarUX ignores the HSR, see
-[Testing](#testing)). Not yet run on hardware.
+[Testing](#testing)).
+
+**On hardware (2026-11-20):** the board in a 2068 with a v3 card, ROM 2.5
+from tspico-firmware-build `main` (`b3e6fb8`), and
+`firmware/controller/basic/mbph4.bas`, which checks what ZEsarUX can't.
+**All 11 checks pass:**
+
+- Detection: `PEEK 101` = 37, ID A5h/5Ah, `BASE` 1, `SIZE` 64, and
+  `SAVE "tpi:ram"` (op 7) describes the board.
+- After power-on, OWN0–7, `WPROT` and the HSR all read 0. The
+  controller's log (64 entries) held only the writes after the boot's own:
+  two passes setting OWN0–7 = 0 and SUB0–7 = 0–7. So it shows the end
+  state, not `MB_BOOT`'s writes themselves; the controller also clears its
+  registers on /RESET.
+- `SAVE`, `VERIFY` and `LOAD "r:…" CODE` of 2000 bytes at 57400 (chunk 7,
+  the stack in chunk 3, so the window is chunk 4): the bytes come back,
+  and **the 2068's own RAM at 8000h–9FFFh, zeroed first, is still all
+  zero**: the window's HSR bit keeps the mover's writes out of HOME RAM.
+  The HSR and OWN4 are 0 after each.
+- With the board's first bank mapped in chunk 4 and HSR bit 4 set (a
+  program's own page in the window chunk), `SAVE`, `LOAD` and `VERIFY`
+  each leave the HSR at 10h, OWN4 at `BASE`, SUB4 at 4 and the page's
+  bytes in place.
 
 ### The Timex bank API on the board (phase 8)
 
@@ -774,8 +796,17 @@ API loops over, one register set per bank, is just 16 bytes on this board
 ([tspico-firmware-build#429](https://github.com/timex-sinclair-projects/tspico-firmware-build/pull/429)).
 Tested in a Z80 model of the board with the HSR rule
 (`rom_bankapi_hosttest.py`, from RAM 6200h and from the 64-column copy) and
-in ZEsarUX (`BANK_ENABLE` there and back); not yet on hardware. Where it
-differs from the plan below:
+in ZEsarUX (`BANK_ENABLE` there and back). **On hardware (2026-11-20):**
+`firmware/controller/banktest/` (`mbbank.tap`), 18 of 18 on the board with
+ROM 2.5 from tspico-firmware-build `main` (`b3e6fb8`): the count and `BASE`
+set at boot; `BANK_ENABLE` of a board bank into chunk 4 and back to HOME,
+with the 2068's own RAM there (zeroed first) still all zero after; the page
+and its HSR bit kept through a second of interrupts and a `tpi:` command;
+`GET_STATUS`, `GET_NUMBER`, `PUT_WORD`/`GET_WORD`; `XFER_BYTES` of 384
+bytes directly and through its buffer, correct on the board, A = 0 and a
+bank mapped in chunk 6 kept; `SAVE_STATUS`/`RESTORE_STATUS`. Not tested
+there: `GOTO_BANK`, `CALL_BANK`, the DOCK and the EXROM, and 64 columns.
+Where it differs from the plan below:
 
 - **No nibble translators.** There is no Timex bank hardware or software to
   stay compatible with, so `WRITE_BS_REG` and `READ_BS_REG` are gone, not
@@ -1538,10 +1569,19 @@ hardware: neither this board nor the v3 card can run bus cycles.
    (open question 2).
 2. A memory test from the 2068: every page, every chunk, pattern and
    address-in-address, with the v3 card and PicoVideo both plugged in.
+   **Passed (2026-11-20)** with the v3 card (`mbmem`; PicoVideo not yet
+   fitted).
 3. Battery: fill the board, power off for a day, verify; measure the standby
    current.
 4. Power-fail: switch off during a long `SAVE "r:"`. Other files must survive;
-   the one being written may be lost.
+   the one being written may be lost. **Passed (2026-11-20)**
+   (`firmware/controller/basic/mbcut.bas`): `SAVE "r:long" CODE 32768,32000`
+   in a loop, each round replacing the last, and the 2068 switched off
+   mid-loop with the controller's USB unplugged, so the board lost its
+   supply too and ran from the battery; the TS-Pico soft-reset before
+   power came back. Then 0 FAIL: `keep` verified, `long` verified (a
+   whole copy survived the SAVE that was cut), and a new SAVE and two
+   ERASEs worked.
 5. The RAM disk end to end: every SAVE/LOAD form, MOVE both ways, backup and
    restore, a full disk, compaction.
 6. `tools/hwcheck.py` grows a RAM-board section. **Written (2026-11-19):**
@@ -1642,14 +1682,23 @@ reference for what it changes.
    FDh/FCh).
 4. **ROM: detection, boot reset and the mover**, plus the `r:` hook.
    **Built (2026-11-19)** as test ROM 2.5 in tspico-firmware-build
-   ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)); hardware tests
-   to come.
+   ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)). **On hardware
+   (2026-11-20):** `mbph4.bas`, 11 of 11 (detection, the state after boot,
+   and the mover's window: no leak into HOME RAM, a program's page put
+   back).
 5. **Firmware: the RAM disk** and `tpi:ram`. **Built (2026-11-19)** in the
    emulator: tspico-firmware-build, `src/TS/ramdisk.py` and `tspico.py`'s
    `RD_*` (PR #427); host-tested (`src/test/ramdisk_hosttest.py`,
    `rd_cmds_hosttest.py`) and run end to end in ZEsarUX's Megabank model
-   (`tools/emu/megabank_smoke.py`, 39/39). Not yet on
-   hardware. `tpi:ram alloc` is still to shape (open question 8).
+   (`tools/emu/megabank_smoke.py`, 39/39). **On hardware (2026-11-20):**
+   `mbdisk` (hardware test 5), 27 of 28 on firmware `40cd82d`: every
+   SAVE/LOAD/VERIFY form, MOVE, ERASE, COPY both ways, a full disk, a 64K
+   disk and restore pass, with no firmware errors in the telemetry. Test 22,
+   `tpi:ram backup` into the current folder, wrote the whole image but
+   ended with J: the listing's refresh ran with the SD card unmounted.
+   Fixed in tspico-firmware-build#440, and with that fix on the card
+   (`/dev_tspico.mpy`) a backup gives 0 OK. `tpi:ram alloc` is still to
+   shape (open question 8).
 6. **PicoVideo** update (its own repo). **Built (2026-11-19)** and
    host-tested ([PicoVideo](#picovideo)); not yet on hardware.
 7. **Board:** schematic, the controller's firmware, PCB (assembled by
@@ -1670,13 +1719,16 @@ reference for what it changes.
    bare statuses said IDLE, so a program's LOAD or VERIFY straight after a
    SAVE sometimes lost its first block command (report 29); they now say
    READY without IDLE, as the channel commands do (tspico-firmware-build
-   #428). Still to run on the boards: tests 2–5, and the standby current
-   (test 3).
+   #428). **The memory test on the board (2026-11-20):** `mbmem`, all 64
+   banks through chunks 4–7 (read back through 2 and 4–7), pattern and
+   complement: **PASS**, with the v3 card fitted (no PicoVideo). Test 5
+   has run too (phase 5, above). Test 4, a power cut during a
+   `SAVE`, passed too (Testing). Still to run: test 3's standby current.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. **Built (2026-11-19), all of
    it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
-   tspico-firmware-build#429): in the Z80 model and ZEsarUX; not yet on
-   hardware.
+   tspico-firmware-build#429): in the Z80 model and ZEsarUX. **On hardware (2026-11-20):** `mbbank`,
+   18 of 18.
 9. **ROM and firmware: `r:` channels** ([Channels](#channels-phase-9)).
    Depends on 4 and 5 only, not on 8, so it can go before it. **Built
    (2026-11-19)** ([Channels as built](#channels-as-built)): the Z80 model
