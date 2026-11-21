@@ -716,7 +716,12 @@ for the whole session, not only at boot:
 `tools/build-rom.py --megabank` → `src/rom/TSPICO-MB.ROM`, **ROM 2.5**
 (`PEEK 101` = 37, ROM_ID 25h). The release ROM, 2.4, is byte-for-byte
 unchanged and stays in flash slot 1 until the board passes its hardware
-tests. The wire format is in that repo's `docs/PROTOCOL.md` §6.3; the code
+tests. **Promoted (2026-11-20):** the board passed, and the test ROM became
+the release ROM as `src/rom/TSPICO-25.ROM`, in flash slot 1
+(timex-sinclair-projects/tspico-firmware-build#441), released as TS-Pico
+2.5 (tag `v2.5`). `--megabank` now builds `build/TSPICO-25.ROM`;
+`TSPICO-MB.ROM` is gone. The wire format is in that repo's
+`docs/PROTOCOL.md` §6.3; the code
 in `src/rom/fdd/fddcmd.asm` under `IFDEF MEGABANK`, documented in
 `docs/reference/rom/exrom-fdd.md`. Decisions taken on the way:
 
@@ -1643,7 +1648,8 @@ and `mbchpg.bas` (the same programs pass in ZEsarUX). **All 40 passed**
 
 **Run on hardware again (2026-11-20)**, with the fast entry
 ([Open questions](#open-questions) 21): the same card, firmware and
-programs, with `TSPICO-MB.ROM` from tspico-firmware-build `main` at
+programs, with `TSPICO-MB.ROM` (since renamed `TSPICO-25.ROM`, the release
+ROM) from tspico-firmware-build `main` at
 `b3e6fb8` (sha1 `c56ae6c3…`) in flash slot 1. That ROM has the
 write-protect fix (timex-sinclair-projects/tspico-firmware-build#432), the
 fast entry (#433), its late-switch fix (#434) and the record's output
