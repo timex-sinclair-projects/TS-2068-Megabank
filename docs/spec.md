@@ -1685,13 +1685,18 @@ reference for what it changes.
    merged into `tspico-device`; its test passes on macOS, Linux and Windows.
 3. **v3 firmware: bus sharing** (core 1). Small, and testable in the emulator
    and on a v3 card with no board (nothing changes until something writes
-   FDh/FCh).
+   FDh/FCh). **Built (2026-11-18)** in tspico-firmware-build#425 (`tsbus.c`
+   yields the chunks a board bank owns). **On hardware:** every board test
+   in phases 4, 5, 7, 8 and 9 runs through it.
 4. **ROM: detection, boot reset and the mover**, plus the `r:` hook.
    **Built (2026-11-19)** as test ROM 2.5 in tspico-firmware-build
    ([ROM](#minimal-rom-detection-reset-mover-r-phase-4)). **On hardware
    (2026-11-20):** `mbph4.bas`, 11 of 11 (detection, the state after boot,
    and the mover's window: no leak into HOME RAM, a program's page put
-   back).
+   back). **Released (2026-11-20):** ROM 2.5 is the release ROM,
+   `TSPICO-25.ROM` in flash slot 1 (tspico-firmware-build#441), in TS-Pico
+   2.5 (tag `v2.5`). On that release, with the board fitted, `tools/hwcheck.py
+   --megabank` gave 75 passed, 0 failed.
 5. **Firmware: the RAM disk** and `tpi:ram`. **Built (2026-11-19)** in the
    emulator: tspico-firmware-build, `src/TS/ramdisk.py` and `tspico.py`'s
    `RD_*` (PR #427); host-tested (`src/test/ramdisk_hosttest.py`,
@@ -1702,8 +1707,7 @@ reference for what it changes.
    disk and restore pass, with no firmware errors in the telemetry. Test 22,
    `tpi:ram backup` into the current folder, wrote the whole image but
    ended with J: the listing's refresh ran with the SD card unmounted.
-   Fixed in tspico-firmware-build#440, and with that fix on the card
-   (`/dev_tspico.mpy`) a backup gives 0 OK. `tpi:ram alloc` is still to
+   Fixed in tspico-firmware-build#440 (in 2.5): a backup gives 0 OK. `tpi:ram alloc` is still to
    shape (open question 8).
 6. **PicoVideo** update (its own repo). **Built (2026-11-19)** and
    host-tested ([PicoVideo](#picovideo)); not yet on hardware.
@@ -1733,8 +1737,11 @@ reference for what it changes.
 8. **ROM: the Timex bank API** made to work on the board (see [ROM](#rom)).
    Last, because nothing above depends on it. **Built (2026-11-19), all of
    it** ([The Timex bank API on the board](#the-timex-bank-api-on-the-board-phase-8),
-   tspico-firmware-build#429): in the Z80 model and ZEsarUX. **On hardware (2026-11-20):** `mbbank`,
-   18 of 18.
+   tspico-firmware-build#429): in the Z80 model and ZEsarUX. **On hardware
+   (2026-11-20):** `mbbank`, 18 of 18. Hardware also found that `TIMEX_HSR`
+   left port FFh's bit 7 (EXROM) set when it gave chunks back to HOME, so
+   ZX48 mode (`OUT 244,3`) restarted the 2068; it now clears it (`TO_HOME`,
+   in #441), and ZX48 mode boots.
 9. **ROM and firmware: `r:` channels** ([Channels](#channels-phase-9)).
    Depends on 4 and 5 only, not on 8, so it can go before it. **Built
    (2026-11-19)** ([Channels as built](#channels-as-built)): the Z80 model
